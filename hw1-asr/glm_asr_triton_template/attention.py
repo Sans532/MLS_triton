@@ -221,6 +221,7 @@ def causal_mask_kernel(
 
 @triton.autotune(
     configs=[
+        triton.Config({"BLOCK_Q": 16, "BLOCK_K": 64}, num_warps=2, num_stages=3),
         triton.Config({"BLOCK_Q": 64, "BLOCK_K": 64}, num_warps=4, num_stages=3),
         triton.Config({"BLOCK_Q": 128, "BLOCK_K": 128}, num_warps=8, num_stages=3),
         triton.Config({"BLOCK_Q": 64, "BLOCK_K": 128}, num_warps=4, num_stages=4),
@@ -408,28 +409,12 @@ def scaled_dot_product_attention(
             k_flat = k.reshape(batch * num_heads, seq_k, head_dim).to(torch.float32)
             v_flat = v.reshape(batch * num_heads, seq_k, head_dim).to(torch.float32)
 
-            if seq_k_padded != seq_k or head_dim_padded != head_dim:
-                k_padded = torch.zeros((batch * num_heads, seq_k_padded, head_dim_padded), dtype=torch.float32, device=q.device)
-                v_padded = torch.zeros((batch * num_heads, seq_k_padded, head_dim_padded), dtype=torch.float32, device=q.device)
-                q_padded = torch.zeros((batch * num_heads, seq_q, head_dim_padded), dtype=torch.float32, device=q.device)
-                k_padded[:, :seq_k, :head_dim] = k_flat
-                v_padded[:, :seq_k, :head_dim] = v_flat
-                q_padded[:, :, :head_dim] = q_flat
-                k_flat = k_padded
-                v_flat = v_padded
-                q_flat = q_padded
-
-            output = torch.empty((batch * num_heads, seq_q, head_dim_padded), dtype=torch.float32, device=q.device)
+            output = torch.empty((batch * num_heads, seq_q, head_dim), dtype=torch.float32, device=q.device)
 
             has_mask = attention_mask is not None
             if has_mask:
                 if attention_mask.ndim == 4:
                     attention_mask = attention_mask.reshape(batch * num_heads, seq_q, seq_k)
-                if seq_k_padded != seq_k:
-                    mask_padded = torch.zeros((batch * num_heads, seq_q, seq_k_padded), dtype=torch.float32, device=q.device)
-                    mask_padded[:, :, :seq_k] = attention_mask
-                    mask_padded[:, :, seq_k:] = -1e9
-                    attention_mask = mask_padded
                 stride_m0 = attention_mask.stride(0)
                 stride_m1 = attention_mask.stride(1)
                 stride_m2 = attention_mask.stride(2)
@@ -443,7 +428,7 @@ def scaled_dot_product_attention(
             attention_fused_kernel[grid](
                 q_flat, k_flat, v_flat, output, mask_ptr,
                 float(scale),
-                seq_q, seq_k_padded, head_dim_padded,
+                seq_q, seq_k, head_dim,
                 q_flat.stride(0), q_flat.stride(1), q_flat.stride(2),
                 k_flat.stride(0), k_flat.stride(1), k_flat.stride(2),
                 v_flat.stride(0), v_flat.stride(1), v_flat.stride(2),
@@ -453,9 +438,6 @@ def scaled_dot_product_attention(
                 HAS_MASK=has_mask,
                 BLOCK_D=head_dim_padded
             )
-            
-            if head_dim_padded != head_dim:
-                output = output[:, :, :head_dim]
                 
             return output.reshape(batch, num_heads, seq_q, head_dim).to(q.dtype)
 
@@ -463,32 +445,13 @@ def scaled_dot_product_attention(
         k_flat = k.reshape(batch * num_heads, seq_k, head_dim).to(torch.float32)
         v_flat = v.reshape(batch * num_heads, seq_k, head_dim).to(torch.float32)
 
-        if seq_k_padded != seq_k or head_dim_padded != head_dim:
-            k_padded = torch.zeros(
-                (batch * num_heads, seq_k_padded, head_dim_padded),
-                dtype=torch.float32,
-                device=q.device,
-            )
-            v_padded = torch.zeros_like(k_padded)
-            q_padded = torch.zeros(
-                (batch * num_heads, seq_q, head_dim_padded),
-                dtype=torch.float32,
-                device=q.device,
-            )
-            k_padded[:, :seq_k, :head_dim] = k_flat
-            v_padded[:, :seq_k, :head_dim] = v_flat
-            q_padded[:, :, :head_dim] = q_flat
-            k_flat = k_padded
-            v_flat = v_padded
-            q_flat = q_padded
-
         scores = torch.empty(
-            (batch * num_heads, seq_q, seq_k_padded),
+            (batch * num_heads, seq_q, seq_k),
             dtype=torch.float32,
             device=q.device,
         )
         output = torch.empty(
-            (batch * num_heads, seq_q, head_dim_padded),
+            (batch * num_heads, seq_q, head_dim),
             dtype=torch.float32,
             device=q.device,
         )
@@ -499,8 +462,8 @@ def scaled_dot_product_attention(
             k_flat,
             scores,
             float(scale),
-            seq_k_padded,
-            head_dim_padded,
+            seq_k,
+            head_dim,
             q_flat.stride(0),
             q_flat.stride(1),
             q_flat.stride(2),
@@ -514,12 +477,9 @@ def scaled_dot_product_attention(
             BLOCK_D=head_dim_padded,
         )
 
-        if seq_k_padded != seq_k:
-            scores[:, :, seq_k:] = -1e9
-
         if is_causal:
             mask = torch.triu(
-                torch.ones((seq_q, seq_k_padded), dtype=torch.float32, device=q.device),
+                torch.ones((seq_q, seq_k), dtype=torch.float32, device=q.device),
                 diagonal=1,
             ) * -1e9
             scores = scores + mask[None, :, :]
@@ -529,30 +489,21 @@ def scaled_dot_product_attention(
                 attention_mask = attention_mask.reshape(
                     batch * num_heads, seq_q, seq_k
                 )
-            if seq_k_padded != seq_k:
-                mask_padded = torch.zeros(
-                    (batch * num_heads, seq_q, seq_k_padded),
-                    dtype=torch.float32,
-                    device=q.device,
-                )
-                mask_padded[:, :, :seq_k] = attention_mask
-                mask_padded[:, :, seq_k:] = -1e9
-                attention_mask = mask_padded
             scores = scores + attention_mask
 
-        scores_2d = scores.reshape(batch * num_heads * seq_q, seq_k_padded)
+        scores_2d = scores.reshape(batch * num_heads * seq_q, seq_k)
         block = seq_k_padded
         softmax_inplace_kernel[(scores_2d.shape[0],)](
-            scores_2d, scores_2d.stride(0), seq_k_padded, BLOCK_SIZE=block
+            scores_2d, scores_2d.stride(0), seq_k, BLOCK_SIZE=block
         )
-        scores = scores_2d.reshape(batch * num_heads, seq_q, seq_k_padded)
+        scores = scores_2d.reshape(batch * num_heads, seq_q, seq_k)
 
         attention_output_kernel[grid](
             scores,
             v_flat,
             output,
-            seq_k_padded,
-            head_dim_padded,
+            seq_k,
+            head_dim,
             scores.stride(0),
             scores.stride(1),
             scores.stride(2),
@@ -565,9 +516,6 @@ def scaled_dot_product_attention(
             BLOCK_K=seq_k_padded,
             BLOCK_D=head_dim_padded,
         )
-
-        if head_dim_padded != head_dim:
-            output = output[:, :, :head_dim]
 
         return output.reshape(batch, num_heads, seq_q, head_dim).to(q.dtype)
 
