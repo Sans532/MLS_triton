@@ -1,0 +1,6 @@
+Expected transcription:
+CONCORD RETURNED TO ITS PLACE AMIDST THE TENTS
+
+Source: LibriSpeech test-clean dataset
+Duration: ~3.5 seconds
+Sample rate: 16000 Hz

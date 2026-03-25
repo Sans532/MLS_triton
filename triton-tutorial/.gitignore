@@ -1,0 +1,10 @@
+# ---- Triton / CUDA ----
+*.ptx
+*.cubin
+*.fatbin
+*.ncu-rep
+
+# ---- Python ----
+__pycache__/
+*.pyc
+*.pyo
