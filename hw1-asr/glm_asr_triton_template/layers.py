@@ -181,6 +181,8 @@ def silu_kernel(x_ptr, y_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
 
 @triton.autotune(
     configs=[
+        triton.Config({"BLOCK_M": 16,  "BLOCK_N": 16,  "BLOCK_K": 64}, num_warps=2, num_stages=3), # Max blocks mode
+        triton.Config({"BLOCK_M": 16,  "BLOCK_N": 32,  "BLOCK_K": 128}, num_warps=2, num_stages=3), # High blocks mode
         triton.Config({"BLOCK_M": 16,  "BLOCK_N": 64,  "BLOCK_K": 64}, num_warps=2, num_stages=3),
         triton.Config({"BLOCK_M": 128, "BLOCK_N": 64,  "BLOCK_K": 32}, num_warps=4, num_stages=3),
         triton.Config({"BLOCK_M": 64,  "BLOCK_N": 128, "BLOCK_K": 32}, num_warps=4, num_stages=3),
@@ -242,7 +244,7 @@ def linear_kernel_tf32(
             mask=(k + offs_k[:, None] < K) & (offs_n[None, :] < N),
             other=0.0,
         )
-        acc += tl.dot(a, b)
+        acc += tl.dot(a, b, allow_tf32=True)
 
     tl.store(
         c_ptr + offs_m[:, None] * stride_cm + offs_n[None, :] * stride_cn,
@@ -253,6 +255,8 @@ def linear_kernel_tf32(
 
 @triton.autotune(
     configs=[
+        triton.Config({"BLOCK_M": 16,  "BLOCK_N": 16,  "BLOCK_K": 64}, num_warps=2, num_stages=3),
+        triton.Config({"BLOCK_M": 16,  "BLOCK_N": 32,  "BLOCK_K": 128}, num_warps=2, num_stages=3),
         triton.Config({"BLOCK_M": 16,  "BLOCK_N": 64,  "BLOCK_K": 64}, num_warps=2, num_stages=3),
         triton.Config({"BLOCK_M": 128, "BLOCK_N": 64,  "BLOCK_K": 32}, num_warps=4, num_stages=3),
         triton.Config({"BLOCK_M": 64,  "BLOCK_N": 128, "BLOCK_K": 32}, num_warps=4, num_stages=3),
@@ -299,7 +303,7 @@ def linear_gelu_kernel(
             mask=(k + offs_k[:, None] < K) & (offs_n[None, :] < N),
             other=0.0,
         )
-        acc += tl.dot(a, b)
+        acc += tl.dot(a, b, allow_tf32=True)
 
     sqrt_2_over_pi = 0.7978845608028654
     acc3 = acc * acc * acc
@@ -315,6 +319,8 @@ def linear_gelu_kernel(
 
 @triton.autotune(
     configs=[
+        triton.Config({"BLOCK_M": 16,  "BLOCK_N": 16,  "BLOCK_K": 64}, num_warps=2, num_stages=3),
+        triton.Config({"BLOCK_M": 16,  "BLOCK_N": 32,  "BLOCK_K": 128}, num_warps=2, num_stages=3),
         triton.Config({"BLOCK_M": 16,  "BLOCK_N": 64,  "BLOCK_K": 64}, num_warps=2, num_stages=3),
         triton.Config({"BLOCK_M": 128, "BLOCK_N": 64,  "BLOCK_K": 32}, num_warps=4, num_stages=3),
         triton.Config({"BLOCK_M": 64,  "BLOCK_N": 128, "BLOCK_K": 32}, num_warps=4, num_stages=3),
@@ -372,8 +378,8 @@ def swiglu_fused_kernel(
             other=0.0,
         )
 
-        gate_acc += tl.dot(a, gate_w)
-        up_acc += tl.dot(a, up_w)
+        gate_acc += tl.dot(a, gate_w, allow_tf32=True)
+        up_acc += tl.dot(a, up_w, allow_tf32=True)
 
     sigmoid = 1.0 / (1.0 + tl.exp(-gate_acc))
     gate_act = gate_acc * sigmoid
@@ -802,7 +808,7 @@ class Linear:
     TILE_N = 64
     TILE_K = 32
 
-    BACKEND = "torch"
+    BACKEND = "auto"
 
     def __init__(self, in_features: int, out_features: int, bias: bool = True):
         self.in_features = in_features
@@ -864,6 +870,9 @@ class Linear:
         if self.weight.device != x.device:
             self.weight = self.weight.to(x.device)
             self._weight_t_padded = None
+        
+        self._ensure_weight_prepared()
+
         output = torch.empty((M, N), dtype=torch.float32, device=x.device)
 
         grid = lambda META: (
