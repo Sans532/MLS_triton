@@ -818,6 +818,15 @@ class Linear:
         self.weight = torch.zeros((out_features, in_features), dtype=torch.float32)
         self.bias_param = torch.zeros(out_features, dtype=torch.float32) if bias else None
 
+        self._weight_t_padded = None
+        self._K_padded = None
+        self._N_padded = None
+
+    def _ensure_weight_prepared(self):
+        """Cache transposed weight for Triton kernel."""
+        if self._weight_t_padded is None:
+            self._weight_t_padded = self.weight.t().contiguous()
+
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         if Linear.BACKEND in ("torch", "cublas"):
             return self._forward_torch(x)
@@ -860,6 +869,9 @@ class Linear:
 
         if self.weight.device != x.device:
             self.weight = self.weight.to(x.device)
+            self._weight_t_padded = None
+        
+        self._ensure_weight_prepared()
 
         output = torch.empty((M, N), dtype=torch.float32, device=x.device)
 
@@ -869,15 +881,15 @@ class Linear:
         )
         linear_kernel_tf32[grid](
             x_2d,
-            self.weight,
+            self._weight_t_padded,
             output,
             M,
             N,
             K,
             x_2d.stride(0),
             x_2d.stride(1),
-            self.weight.stride(1),
-            self.weight.stride(0),
+            self._weight_t_padded.stride(0),
+            self._weight_t_padded.stride(1),
             output.stride(0),
             output.stride(1),
         )
@@ -991,7 +1003,16 @@ class MLP:
 
         self.down_proj = Linear(intermediate_size, hidden_size, bias=bias)
 
-        self.down_proj = Linear(intermediate_size, hidden_size, bias=bias)
+        self._gate_weight_t = None
+        self._up_weight_t = None
+
+    def _prepare_fused_weights(self):
+        """Prepare pre-transposed weights for fused kernel."""
+        if self._gate_weight_t is None and self.use_gating:
+            if self.gate_proj.weight.device != self.up_proj.weight.device:
+                self.up_proj.weight = self.up_proj.weight.to(self.gate_proj.weight.device)
+            self._gate_weight_t = self.gate_proj.weight.t().contiguous()
+            self._up_weight_t = self.up_proj.weight.t().contiguous()
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         if self.use_gating and MLP.FUSED and x.is_cuda:
@@ -1008,8 +1029,11 @@ class MLP:
         """Fused SwiGLU forward pass."""
         if self.gate_proj.weight.device != x.device:
             self.gate_proj.weight = self.gate_proj.weight.to(x.device)
+            self._gate_weight_t = None
         if self.up_proj.weight.device != x.device:
             self.up_proj.weight = self.up_proj.weight.to(x.device)
+            self._up_weight_t = None
+        self._prepare_fused_weights()
 
         orig_shape = x.shape
         x_2d = x.reshape(-1, self.hidden_size).to(torch.float32).contiguous()
@@ -1025,18 +1049,18 @@ class MLP:
         )
         swiglu_fused_kernel[grid](
             x_2d,
-            self.gate_proj.weight,
-            self.up_proj.weight,
+            self._gate_weight_t,
+            self._up_weight_t,
             intermediate,
             M,
             N,
             K,
             x_2d.stride(0),
             x_2d.stride(1),
-            self.gate_proj.weight.stride(1),
-            self.gate_proj.weight.stride(0),
-            self.up_proj.weight.stride(1),
-            self.up_proj.weight.stride(0),
+            self._gate_weight_t.stride(0),
+            self._gate_weight_t.stride(1),
+            self._up_weight_t.stride(0),
+            self._up_weight_t.stride(1),
             intermediate.stride(0),
             intermediate.stride(1),
         )
@@ -1066,6 +1090,13 @@ class EncoderMLP:
         self.bias_enabled = bias
         self.activation = activation
 
+        self._fc1_weight_t = None
+
+    def _prepare_fused_weights(self):
+        """Prepare pre-transposed weights for fused kernel."""
+        if self._fc1_weight_t is None:
+            self._fc1_weight_t = self.fc1.weight.t().contiguous()
+
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         if EncoderMLP.FUSED and self.activation == "gelu" and x.is_cuda:
             return self._forward_fused(x)
@@ -1079,7 +1110,9 @@ class EncoderMLP:
         """Fused Linear+GELU forward pass."""
         if self.fc1.weight.device != x.device:
             self.fc1.weight = self.fc1.weight.to(x.device)
-        
+            self._fc1_weight_t = None
+        self._prepare_fused_weights()
+
         orig_shape = x.shape
         x_2d = x.reshape(-1, self.hidden_size).to(torch.float32).contiguous()
         M = x_2d.shape[0]
@@ -1094,15 +1127,15 @@ class EncoderMLP:
         )
         linear_gelu_kernel[grid](
             x_2d,
-            self.fc1.weight,
+            self._fc1_weight_t,
             intermediate,
             M,
             N,
             K,
             x_2d.stride(0),
             x_2d.stride(1),
-            self.fc1.weight.stride(1),
-            self.fc1.weight.stride(0),
+            self._fc1_weight_t.stride(0),
+            self._fc1_weight_t.stride(1),
             intermediate.stride(0),
             intermediate.stride(1),
         )
@@ -1177,11 +1210,12 @@ if __name__ == "__main__":
     
     y_fused = torch.empty((M_test, N_test), device=device, dtype=torch.float32)
     grid_test = lambda META: (triton.cdiv(M_test, META['BLOCK_M']), triton.cdiv(N_test, META['BLOCK_N']))
+    linear_w_t = linear_w.t().contiguous()
     rmsnorm_linear_kernel[grid_test](
-        x_test, norm_w, linear_w, y_fused,
+        x_test, norm_w, linear_w_t, y_fused,
         M_test, N_test, K_test,
         x_test.stride(0), x_test.stride(1),
-        linear_w.stride(1), linear_w.stride(0),
+        linear_w_t.stride(0), linear_w_t.stride(1),
         y_fused.stride(0), y_fused.stride(1),
         1e-6
     )
