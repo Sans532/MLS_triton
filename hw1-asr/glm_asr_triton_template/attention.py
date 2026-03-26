@@ -273,7 +273,7 @@ def attention_fused_kernel(
         v_ptrs = v_ptr + pid_bh * stride_v0 + curr_k[:, None] * stride_v1 + offs_d[None, :] * stride_v2
         v = tl.load(v_ptrs, mask=(curr_k[:, None] < seq_k) & (offs_d[None, :] < head_dim), other=0.0)
 
-        qk = tl.dot(q, k, allow_tf32=True) * scale
+        qk = tl.dot(q, k) * scale
 
         if HAS_MASK:
             m_ptrs = mask_ptr + pid_bh * stride_m0 + offs_q[:, None] * stride_m1 + curr_k[None, :] * stride_m2
@@ -295,7 +295,7 @@ def attention_fused_kernel(
         l_curr = tl.sum(p, axis=1)
         l_new = alpha * l_prev + l_curr
 
-        acc = acc * alpha[:, None] + tl.dot(p.to(v.dtype), v, allow_tf32=True)
+        acc = acc * alpha[:, None] + tl.dot(p.to(v.dtype), v)
 
         m_prev = m_new
         l_prev = l_new
@@ -396,9 +396,9 @@ def scaled_dot_product_attention(
     seq_k_padded = next_power_of_two(seq_k)
     head_dim_padded = next_power_of_two(head_dim)
 
-    # Fused kernel loops over seq_k internally so it handles arbitrary sequence lengths
     use_triton = (
         q.is_cuda
+        and seq_k_padded <= MAX_ATTENTION_DIM
         and head_dim_padded <= MAX_ATTENTION_DIM
     )
 
