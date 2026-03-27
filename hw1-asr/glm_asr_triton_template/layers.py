@@ -668,7 +668,7 @@ class RMSNorm:
         self.hidden_size = hidden_size
         self.eps = eps
         self.weight = torch.ones(hidden_size, dtype=torch.float32)
-        self.use_triton = _is_power_of_two(hidden_size) # This flag will force a fallback to a PyTorch implementation of the kernels when the hidden_size is not a power of 2.
+        self.use_triton = True # Enable Triton by default for CUDA
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         original_shape = x.shape
@@ -712,7 +712,7 @@ class LayerNorm:
         self.eps = eps
         self.weight = torch.ones(hidden_size, dtype=torch.float32)
         self.bias = torch.zeros(hidden_size, dtype=torch.float32)
-        self.use_triton = _is_power_of_two(hidden_size)  # This flag will force a fallback to a PyTorch implementation of the kernels when the hidden_size is not a power of 2.
+        self.use_triton = True  # Enable Triton by default for CUDA
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         original_shape = x.shape

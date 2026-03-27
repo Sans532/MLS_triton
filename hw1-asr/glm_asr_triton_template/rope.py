@@ -220,6 +220,98 @@ def _apply_rope_single(
     return torch.cat([x1_rot, x2_rot], dim=-1)
 
 
+@triton.jit
+def apply_rope_kernel(
+    q_ptr,
+    k_ptr,
+    cos_ptr,
+    sin_ptr,
+    q_out_ptr,
+    k_out_ptr,
+    stride_q_batch, stride_q_head, stride_q_seq, stride_q_dim,
+    stride_k_batch, stride_k_head, stride_k_seq, stride_k_dim,
+    stride_cos_seq, stride_cos_dim,
+    stride_sin_seq, stride_sin_dim,
+    batch_size, num_heads_q, num_heads_k, seq_len, head_dim, rotary_dim,
+    BLOCK_SIZE: tl.constexpr,
+):
+    """
+    Apply rotary embeddings to Q and K.
+    Grid: (batch_size * max(num_heads_q, num_heads_k), seq_len)
+    """
+    pid_bh = tl.program_id(0)
+    pid_s = tl.program_id(1)
+    
+    # Identify if we are processing Q or K or both based on head index
+    # Note: Using a single kernel for both Q and K application if possible,
+    # or separate them if head counts differ significantly.
+    # For GLM, num_heads_k is usually small (GQA).
+    
+    # Process Q
+    if pid_bh < batch_size * num_heads_q:
+        batch_idx = pid_bh // num_heads_q
+        head_idx = pid_bh % num_heads_q
+        
+        offs_d = tl.arange(0, BLOCK_SIZE)
+        half_dim = rotary_dim // 2
+        
+        # Load cos/sin for this sequence position
+        cos = tl.load(cos_ptr + pid_s * stride_cos_seq + (offs_d % half_dim) * stride_cos_dim, mask=offs_d < half_dim, other=0.0)
+        sin = tl.load(sin_ptr + pid_s * stride_sin_seq + (offs_d % half_dim) * stride_sin_dim, mask=offs_d < half_dim, other=0.0)
+        
+        # Base pointers for Q
+        q_base = q_ptr + batch_idx * stride_q_batch + head_idx * stride_q_head + pid_s * stride_q_seq
+        q_out_base = q_out_ptr + batch_idx * stride_q_batch + head_idx * stride_q_head + pid_s * stride_q_seq
+        
+        # Rotate first half and second half
+        q1 = tl.load(q_base + (offs_d) * stride_q_dim, mask=offs_d < half_dim, other=0.0)
+        q2 = tl.load(q_base + (offs_d + half_dim) * stride_q_dim, mask=offs_d < half_dim, other=0.0)
+        
+        res1 = q1 * cos - q2 * sin
+        res2 = q2 * cos + q1 * sin
+        
+        tl.store(q_out_base + (offs_d) * stride_q_dim, res1, mask=offs_d < half_dim)
+        tl.store(q_out_base + (offs_d + half_dim) * stride_q_dim, res2, mask=offs_d < half_dim)
+        
+        # Copy remaining dimensions (if any)
+        if head_dim > rotary_dim:
+            offs_rem = tl.arange(0, BLOCK_SIZE)
+            mask_rem = (offs_rem < (head_dim - rotary_dim))
+            q_rem = tl.load(q_base + (rotary_dim + offs_rem) * stride_q_dim, mask=mask_rem, other=0.0)
+            tl.store(q_out_base + (rotary_dim + offs_rem) * stride_q_dim, q_rem, mask=mask_rem)
+
+    # Process K (using same grid but offset)
+    if pid_bh < batch_size * num_heads_k:
+        batch_idx = pid_bh // num_heads_k
+        head_idx = pid_bh % num_heads_k
+        
+        offs_d = tl.arange(0, BLOCK_SIZE)
+        half_dim = rotary_dim // 2
+        
+        # Load cos/sin
+        cos = tl.load(cos_ptr + pid_s * stride_cos_seq + (offs_d % half_dim) * stride_cos_dim, mask=offs_d < half_dim, other=0.0)
+        sin = tl.load(sin_ptr + pid_s * stride_sin_seq + (offs_d % half_dim) * stride_sin_dim, mask=offs_d < half_dim, other=0.0)
+        
+        # Base pointers for K
+        k_base = k_ptr + batch_idx * stride_k_batch + head_idx * stride_k_head + pid_s * stride_k_seq
+        k_out_base = k_out_ptr + batch_idx * stride_k_batch + head_idx * stride_k_head + pid_s * stride_k_seq
+        
+        k1 = tl.load(k_base + (offs_d) * stride_k_dim, mask=offs_d < half_dim, other=0.0)
+        k2 = tl.load(k_base + (offs_d + half_dim) * stride_k_dim, mask=offs_d < half_dim, other=0.0)
+        
+        res1 = k1 * cos - k2 * sin
+        res2 = k2 * cos + k1 * sin
+        
+        tl.store(k_out_base + (offs_d) * stride_k_dim, res1, mask=offs_d < half_dim)
+        tl.store(k_out_base + (offs_d + half_dim) * stride_k_dim, res2, mask=offs_d < half_dim)
+        
+        if head_dim > rotary_dim:
+            offs_rem = tl.arange(0, BLOCK_SIZE)
+            mask_rem = (offs_rem < (head_dim - rotary_dim))
+            k_rem = tl.load(k_base + (rotary_dim + offs_rem) * stride_k_dim, mask=mask_rem, other=0.0)
+            tl.store(k_out_base + (rotary_dim + offs_rem) * stride_k_dim, k_rem, mask=mask_rem)
+
+
 def apply_rotary_pos_emb(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -228,7 +320,7 @@ def apply_rotary_pos_emb(
     rotary_dim: Optional[int] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
-    Apply rotary position embeddings.
+    Apply rotary position embeddings using Triton kernel if available.
     """
     batch, num_q_heads, seq_len, head_dim = q.shape
     _, num_kv_heads, _, _ = k.shape
@@ -236,19 +328,46 @@ def apply_rotary_pos_emb(
     if rotary_dim is None:
         rotary_dim = head_dim
 
-    half_dim = rotary_dim // 2
+    if q.is_cuda:
+        q_out = torch.empty_like(q)
+        k_out = torch.empty_like(k)
+        
+        # Grid: (batch * max(heads), seq_len)
+        grid = (batch * max(num_q_heads, num_kv_heads), seq_len)
+        
+        # Ensure cos/sin are 2D and match seq_len
+        if cos.ndim == 3:
+            cos = cos[0]
+            sin = sin[0]
+        
+        # BLOCK_SIZE should be at least rotary_dim // 2
+        block_size = triton.next_power_of_2(max(rotary_dim // 2, head_dim - rotary_dim))
 
+        apply_rope_kernel[grid](
+            q, k, cos, sin, q_out, k_out,
+            q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+            k.stride(0), k.stride(1), k.stride(2), k.stride(3),
+            cos.stride(0), cos.stride(1),
+            sin.stride(0), sin.stride(1),
+            batch, num_q_heads, num_kv_heads, seq_len, head_dim, rotary_dim,
+            BLOCK_SIZE=block_size
+        )
+        return q_out, k_out
+
+    # Fallback to Torch for CPU
+    half_dim = rotary_dim // 2
     if cos.shape[1] > half_dim:
         cos = cos[:, :half_dim]
         sin = sin[:, :half_dim]
 
-    cos = cos.to(torch.float32).contiguous()
-    sin = sin.to(torch.float32).contiguous()
+    cos = cos.to(torch.float32)
+    sin = sin.to(torch.float32)
 
     q_out = _apply_rope_single(q, cos, sin, half_dim, head_dim)
     k_out = _apply_rope_single(k, cos, sin, half_dim, head_dim)
 
     return q_out.to(q.dtype), k_out.to(k.dtype)
+
 
 
 def apply_partial_rotary_pos_emb(

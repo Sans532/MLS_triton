@@ -373,7 +373,7 @@ def next_power_of_two(x: int) -> int:
     return 1 << (x - 1).bit_length() if x > 0 else 1
 
 
-MAX_ATTENTION_DIM = 256
+MAX_ATTENTION_DIM = 4096  # Support much larger sequences with Triton
 
 
 def scaled_dot_product_attention(
@@ -393,14 +393,11 @@ def scaled_dot_product_attention(
     if scale is None:
         scale = 1.0 / np.sqrt(head_dim)
 
+    # Use Triton if on CUDA and dimensions are supported
     seq_k_padded = next_power_of_two(seq_k)
     head_dim_padded = next_power_of_two(head_dim)
-
-    use_triton = (
-        q.is_cuda
-        and seq_k_padded <= MAX_ATTENTION_DIM
-        and head_dim_padded <= MAX_ATTENTION_DIM
-    )
+    
+    use_triton = q.is_cuda and head_dim <= 256
 
     if use_triton:
         use_fused_attention = True

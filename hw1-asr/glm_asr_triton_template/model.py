@@ -804,6 +804,22 @@ class GlmAsrModel:
                 device=inputs_embeds.device,
             )
 
+        # Allocate KV buffers for all layers
+        kv_buffers = self.text_decoder.allocate_kv_buffers(
+            batch_size, max_seq_len=input_ids.shape[1] + max_new_tokens
+        )
+        cache_pos = 0
+
+        # Initialize KV cache with prompt
+        _, cache_pos = self.text_decoder.forward_with_kv_buffers(
+            inputs_embeds, kv_buffers, cache_pos
+        )
+
+        # Initialize KV cache with prompt
+        hidden_states, cache_pos = self.text_decoder.forward_with_kv_buffers(
+            inputs_embeds, kv_buffers, cache_pos
+        )
+
         # Track which sequences have finished (hit EOS)
         finished = torch.zeros(batch_size, dtype=torch.bool, device=generated.device)
 
@@ -816,51 +832,42 @@ class GlmAsrModel:
         )
 
         # Autoregressive generation
-        for _ in range(max_new_tokens):
-            # Get logits for next token
-            logits = self.decode(inputs_embeds=inputs_embeds)
+        curr_hidden = hidden_states[:, -1:, :]
+        for i in range(max_new_tokens):
+            # Logits for the LAST position
+            logits = self.lm_head(curr_hidden)
             next_token_logits = logits[:, -1, :] / temperature
 
             # Top-k sampling
             if top_k > 0 and top_k < next_token_logits.shape[-1]:
                 top_k_indices = torch.argsort(next_token_logits, dim=-1)[:, -top_k:]
                 top_k_logits = torch.gather(next_token_logits, dim=-1, index=top_k_indices)
-
-                # Softmax
-                top_k_logits_shifted = top_k_logits - torch.max(
-                    top_k_logits, dim=-1, keepdim=True
-                ).values
+                top_k_logits_shifted = top_k_logits - torch.max(top_k_logits, dim=-1, keepdim=True).values
                 exp_logits = torch.exp(top_k_logits_shifted)
                 probs = exp_logits / torch.sum(exp_logits, dim=-1, keepdim=True)
-
-                # Sample
                 cumprobs = torch.cumsum(probs, dim=-1)
                 samples = torch.rand((batch_size, 1), device=next_token_logits.device)
                 next_token_idx = torch.argmax((cumprobs >= samples).to(torch.float32), dim=-1)
-                next_token = torch.gather(
-                    top_k_indices,
-                    dim=-1,
-                    index=next_token_idx[:, None],
-                )
+                next_token = torch.gather(top_k_indices, dim=-1, index=next_token_idx[:, None])
             else:
                 next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
 
             # Append to generated
             generated = torch.cat([generated, next_token], dim=1)
 
-            # Check for EOS - mark sequences that generated any EOS token
+            # Check for EOS
             next_token_flat = next_token.flatten()
-            is_eos = torch.any(
-                next_token_flat[:, None] == eos_token_ids_cp[None, :], dim=1
-            )
+            is_eos = torch.any(next_token_flat[:, None] == eos_token_ids_cp[None, :], dim=1)
             finished = finished | is_eos
-
-            # Stop if all sequences have finished
             if torch.all(finished):
                 break
 
-            # Update inputs_embeds with new token
-            new_embeds = self.text_decoder.embed_tokens(next_token)
-            inputs_embeds = torch.cat([inputs_embeds, new_embeds], dim=1)
+            # Update for next iteration: only process the NEW token
+            next_embeds = self.text_decoder.embed_tokens(next_token)
+            curr_hidden, cache_pos = self.text_decoder.forward_with_kv_buffers(
+                next_embeds, kv_buffers, cache_pos
+            )
 
         return generated
+
+
