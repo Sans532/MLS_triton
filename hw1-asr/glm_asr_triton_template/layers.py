@@ -802,6 +802,8 @@ class RMSNorm:
         x_2d = x.reshape(batch_size, K).contiguous().to(torch.float32)
         linear._ensure_weight_prepared()
         
+        linear_w = linear._weight_t_padded.contiguous() if linear._weight_t_padded is not None else None
+        
         if linear.weight.device != x.device:
             linear.weight = linear.weight.to(x.device)
             linear._weight_t_padded = None
@@ -815,10 +817,10 @@ class RMSNorm:
         )
         
         rmsnorm_linear_kernel[grid](
-            x_2d, self.weight, linear._weight_t_padded, output,
+            x_2d, self.weight.contiguous(), linear_w, output,
             M, N, K,
             x_2d.stride(0), x_2d.stride(1),
-            linear._weight_t_padded.stride(0), linear._weight_t_padded.stride(1),
+            linear_w.stride(0), linear_w.stride(1),
             output.stride(0), output.stride(1),
             self.eps
         )
@@ -893,6 +895,8 @@ class LayerNorm:
         x_2d = x.reshape(batch_size, K).contiguous().to(torch.float32)
         linear._ensure_weight_prepared()
 
+        linear_w = linear._weight_t_padded.contiguous() if linear._weight_t_padded is not None else None
+
         if linear.weight.device != x.device:
             linear.weight = linear.weight.to(x.device)
             linear._weight_t_padded = None
@@ -906,10 +910,10 @@ class LayerNorm:
         )
         
         layernorm_linear_kernel[grid](
-            x_2d, self.weight, self.bias, linear._weight_t_padded, output,
+            x_2d, self.weight.contiguous(), self.bias.contiguous(), linear_w, output,
             M, N, K,
             x_2d.stride(0), x_2d.stride(1),
-            linear._weight_t_padded.stride(0), linear._weight_t_padded.stride(1),
+            linear_w.stride(0), linear_w.stride(1),
             output.stride(0), output.stride(1),
             self.eps
         )

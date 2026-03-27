@@ -466,9 +466,9 @@ def scaled_dot_product_attention(
     if use_triton:
         if seq_q == 1:
             # Optimized decoding path
-            q_flat = q.reshape(batch * num_heads, head_dim).to(torch.float32)
-            k_flat = k.reshape(batch * num_heads, seq_k, head_dim).to(torch.float32)
-            v_flat = v.reshape(batch * num_heads, seq_k, head_dim).to(torch.float32)
+            q_flat = q.reshape(batch * num_heads, head_dim).contiguous().to(torch.float32)
+            k_flat = k.reshape(batch * num_heads, seq_k, head_dim).contiguous().to(torch.float32)
+            v_flat = v.reshape(batch * num_heads, seq_k, head_dim).contiguous().to(torch.float32)
             
             output = torch.empty((batch * num_heads, head_dim), dtype=torch.float32, device=q.device)
             
@@ -490,16 +490,21 @@ def scaled_dot_product_attention(
 
         use_fused_attention = True
         if use_fused_attention:
-            q_flat = q.reshape(batch * num_heads, seq_q, head_dim).to(torch.float32)
-            k_flat = k.reshape(batch * num_heads, seq_k, head_dim).to(torch.float32)
-            v_flat = v.reshape(batch * num_heads, seq_k, head_dim).to(torch.float32)
+            q_flat = q.reshape(batch * num_heads, seq_q, head_dim).contiguous().to(torch.float32)
+            k_flat = k.reshape(batch * num_heads, seq_k, head_dim).contiguous().to(torch.float32)
+            v_flat = v.reshape(batch * num_heads, seq_k, head_dim).contiguous().to(torch.float32)
 
             output = torch.empty((batch * num_heads, seq_q, head_dim), dtype=torch.float32, device=q.device)
 
             has_mask = attention_mask is not None
             if has_mask:
                 if attention_mask.ndim == 4:
+                    # Handle broadcasting of mask (B, 1, Sq, Sk) to (B, H, Sq, Sk)
+                    if attention_mask.shape[1] == 1 and num_heads > 1:
+                        attention_mask = attention_mask.expand(-1, num_heads, -1, -1)
                     attention_mask = attention_mask.reshape(batch * num_heads, seq_q, seq_k)
+                
+                attention_mask = attention_mask.contiguous().to(torch.float32)
                 stride_m0 = attention_mask.stride(0)
                 stride_m1 = attention_mask.stride(1)
                 stride_m2 = attention_mask.stride(2)

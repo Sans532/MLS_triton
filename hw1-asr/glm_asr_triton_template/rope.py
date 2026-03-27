@@ -307,6 +307,11 @@ def apply_rotary_pos_emb(
         return q_out.to(q.dtype), k_out.to(k.dtype)
 
     # Triton path
+    q = q.contiguous()
+    k = k.contiguous()
+    cos = cos.contiguous()
+    sin = sin.contiguous()
+    
     q_out = torch.empty_like(q)
     k_out = torch.empty_like(k)
     
