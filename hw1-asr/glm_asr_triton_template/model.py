@@ -123,8 +123,7 @@ class AudioEncoderLayer:
 
         # MLP with pre-norm
         residual = hidden_states
-        hidden_states = self.final_layer_norm(hidden_states)
-        hidden_states = self.fc1(hidden_states)
+        hidden_states = self.final_layer_norm.fused_linear(hidden_states, self.fc1)
         hidden_states = gelu(hidden_states)
         hidden_states = self.fc2(hidden_states)
         hidden_states = residual + hidden_states
@@ -269,12 +268,13 @@ class DecoderLayer:
 
         # Self-attention with pre-norm
         residual = hidden_states
-        hidden_states = self.input_layernorm(hidden_states)
-
-        # Project to Q, K, V
-        q = self.q_proj(hidden_states)
-        k = self.k_proj(hidden_states)
-        v = self.v_proj(hidden_states)
+        # Project to Q (fused), K, V
+        q = self.input_layernorm.fused_linear(hidden_states, self.q_proj)
+        
+        # Still need normed states for K, V
+        hidden_states_normed = self.input_layernorm(hidden_states)
+        k = self.k_proj(hidden_states_normed)
+        v = self.v_proj(hidden_states_normed)
 
         # Reshape for attention
         q = q.reshape(batch, seq_len, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
@@ -339,12 +339,11 @@ class DecoderLayer:
 
         # Self-attention with pre-norm
         residual = hidden_states
-        hidden_states = self.input_layernorm(hidden_states)
-
-        # Project to Q, K, V
-        q = self.q_proj(hidden_states)
-        k = self.k_proj(hidden_states)
-        v = self.v_proj(hidden_states)
+        # Project to Q (fused), K, V
+        q = self.input_layernorm.fused_linear(hidden_states, self.q_proj)
+        hidden_states_normed = self.input_layernorm(hidden_states)
+        k = self.k_proj(hidden_states_normed)
+        v = self.v_proj(hidden_states_normed)
 
         # Reshape for attention
         q = q.reshape(batch, seq_len, self.num_heads, self.head_dim).permute(0, 2, 1, 3)

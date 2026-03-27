@@ -658,6 +658,85 @@ def rmsnorm_linear_kernel(
         mask=(offs_m[:, None] < M) & (offs_n[None, :] < N)
     )
 
+
+@triton.autotune(
+    configs=[
+        triton.Config({"BLOCK_M": 128, "BLOCK_N": 64,  "BLOCK_K": 32}, num_warps=4, num_stages=3),
+        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 128, "BLOCK_K": 32}, num_warps=4, num_stages=3),
+        triton.Config({"BLOCK_M": 32,  "BLOCK_N": 64,  "BLOCK_K": 32}, num_warps=2, num_stages=3),
+    ],
+    key=["M", "N", "K"],
+)
+@triton.jit
+def layernorm_linear_kernel(
+    x_ptr,
+    norm_w_ptr,
+    norm_b_ptr,
+    linear_w_ptr,
+    y_ptr,
+    M, N, K,
+    stride_xm, stride_xk,
+    stride_wnk, stride_wnn,
+    stride_ym, stride_yn,
+    eps,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+):
+    pid_m = tl.program_id(0)
+    pid_n = tl.program_id(1)
+
+    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    offs_k = tl.arange(0, BLOCK_K)
+
+    # Compute mean and variance for LayerNorm
+    sum_x = tl.zeros((BLOCK_M,), dtype=tl.float32)
+    sum_x2 = tl.zeros((BLOCK_M,), dtype=tl.float32)
+    
+    for k in range(0, K, BLOCK_K):
+        x = tl.load(
+            x_ptr + offs_m[:, None] * stride_xm + (k + offs_k[None, :]) * stride_xk,
+            mask=(offs_m[:, None] < M) & (k + offs_k[None, :] < K),
+            other=0.0
+        ).to(tl.float32)
+        sum_x += tl.sum(x, axis=1)
+        sum_x2 += tl.sum(x * x, axis=1)
+
+    mean = sum_x / K
+    var = (sum_x2 / K) - (mean * mean)
+    r_std = 1.0 / tl.sqrt(var + eps)
+
+    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+    for k in range(0, K, BLOCK_K):
+        x = tl.load(
+            x_ptr + offs_m[:, None] * stride_xm + (k + offs_k[None, :]) * stride_xk,
+            mask=(offs_m[:, None] < M) & (k + offs_k[None, :] < K),
+            other=0.0
+        ).to(tl.float32)
+        
+        x_normed = (x - mean[:, None]) * r_std[:, None]
+        
+        norm_w = tl.load(norm_w_ptr + (k + offs_k), mask=(k + offs_k < K), other=0.0).to(tl.float32)
+        norm_b = tl.load(norm_b_ptr + (k + offs_k), mask=(k + offs_k < K), other=0.0).to(tl.float32)
+        
+        x_normed = x_normed * norm_w[None, :] + norm_b[None, :]
+        
+        linear_w = tl.load(
+            linear_w_ptr + (k + offs_k[:, None]) * stride_wnk + offs_n[None, :] * stride_wnn,
+            mask=(k + offs_k[:, None] < K) & (offs_n[None, :] < N),
+            other=0.0
+        ).to(tl.float32)
+        
+        acc += tl.dot(x_normed, linear_w)
+        
+    tl.store(
+        y_ptr + offs_m[:, None] * stride_ym + offs_n[None, :] * stride_yn,
+        acc,
+        mask=(offs_m[:, None] < M) & (offs_n[None, :] < N)
+    )
+
+
 # ============================================================================
 # Layer Classes
 # ============================================================================
@@ -709,6 +788,48 @@ class RMSNorm:
             self.weight = self.weight.to(x.device)
         return (self.weight * x_normed).to(x.dtype)
 
+    def fused_linear(self, x: torch.Tensor, linear: "Linear") -> torch.Tensor:
+        """Fused RMSNorm + Linear."""
+        if not (self.use_triton and x.is_cuda and linear.BACKEND != "torch"):
+            return linear(self(x))
+
+        original_shape = x.shape
+        batch_size = int(np.prod(x.shape[:-1]))
+        K = self.hidden_size
+        N = linear.out_features
+        M = batch_size
+
+        x_2d = x.reshape(batch_size, K).contiguous().to(torch.float32)
+        linear._ensure_weight_prepared()
+        
+        if linear.weight.device != x.device:
+            linear.weight = linear.weight.to(x.device)
+            linear._weight_t_padded = None
+            linear._ensure_weight_prepared()
+
+        output = torch.empty((M, N), dtype=torch.float32, device=x.device)
+        
+        grid = lambda META: (
+            triton.cdiv(M, META['BLOCK_M']),
+            triton.cdiv(N, META['BLOCK_N']),
+        )
+        
+        rmsnorm_linear_kernel[grid](
+            x_2d, self.weight, linear._weight_t_padded, output,
+            M, N, K,
+            x_2d.stride(0), x_2d.stride(1),
+            linear._weight_t_padded.stride(0), linear._weight_t_padded.stride(1),
+            output.stride(0), output.stride(1),
+            self.eps
+        )
+        
+        if linear.has_bias and linear.bias_param is not None:
+            if linear.bias_param.device != x.device:
+                linear.bias_param = linear.bias_param.to(x.device)
+            output = output + linear.bias_param
+            
+        return output.reshape(*original_shape[:-1], N).to(x.dtype)
+
 
 class LayerNorm:
     """Layer Normalization using Triton with Torch fallback."""
@@ -757,6 +878,48 @@ class LayerNorm:
         if self.bias.device != x.device:
             self.bias = self.bias.to(x.device)
         return (self.weight * x_normed + self.bias).to(x.dtype)
+
+    def fused_linear(self, x: torch.Tensor, linear: "Linear") -> torch.Tensor:
+        """Fused LayerNorm + Linear."""
+        if not (self.use_triton and x.is_cuda and linear.BACKEND != "torch"):
+            return linear(self(x))
+
+        original_shape = x.shape
+        batch_size = int(np.prod(x.shape[:-1]))
+        K = self.hidden_size
+        N = linear.out_features
+        M = batch_size
+
+        x_2d = x.reshape(batch_size, K).contiguous().to(torch.float32)
+        linear._ensure_weight_prepared()
+
+        if linear.weight.device != x.device:
+            linear.weight = linear.weight.to(x.device)
+            linear._weight_t_padded = None
+            linear._ensure_weight_prepared()
+
+        output = torch.empty((M, N), dtype=torch.float32, device=x.device)
+        
+        grid = lambda META: (
+            triton.cdiv(M, META['BLOCK_M']),
+            triton.cdiv(N, META['BLOCK_N']),
+        )
+        
+        layernorm_linear_kernel[grid](
+            x_2d, self.weight, self.bias, linear._weight_t_padded, output,
+            M, N, K,
+            x_2d.stride(0), x_2d.stride(1),
+            linear._weight_t_padded.stride(0), linear._weight_t_padded.stride(1),
+            output.stride(0), output.stride(1),
+            self.eps
+        )
+        
+        if linear.has_bias and linear.bias_param is not None:
+            if linear.bias_param.device != x.device:
+                linear.bias_param = linear.bias_param.to(x.device)
+            output = output + linear.bias_param
+            
+        return output.reshape(*original_shape[:-1], N).to(x.dtype)
 
 
 def gelu(x: torch.Tensor) -> torch.Tensor:

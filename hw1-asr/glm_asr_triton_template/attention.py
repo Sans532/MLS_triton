@@ -219,15 +219,76 @@ def causal_mask_kernel(
     )
 
 
+@triton.jit
+def attention_decode_kernel(
+    q_ptr, k_ptr, v_ptr, output_ptr,
+    scale,
+    seq_k, head_dim,
+    stride_q0, stride_q1, stride_q2,
+    stride_k0, stride_k1, stride_k2,
+    stride_v0, stride_v1, stride_v2,
+    stride_o0, stride_o1, stride_o2,
+    BLOCK_D: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+):
+    """
+    Optimized attention kernel for single-token decoding (seq_q=1).
+    Grid: (batch_heads,)
+    """
+    pid_bh = tl.program_id(0)
+    
+    offs_d = tl.arange(0, BLOCK_D)
+    
+    # Load Q (one position)
+    q_ptrs = q_ptr + pid_bh * stride_q0 + offs_d * stride_q2
+    q = tl.load(q_ptrs, mask=offs_d < head_dim, other=0.0)
+    
+    m_prev = -float("inf")
+    l_prev = 0.0
+    acc = tl.zeros([BLOCK_D], dtype=tl.float32)
+    
+    for start_k in range(0, seq_k, BLOCK_K):
+        offs_k = start_k + tl.arange(0, BLOCK_K)
+        
+        # Load K
+        k_ptrs = k_ptr + pid_bh * stride_k0 + offs_k[None, :] * stride_k1 + offs_d[:, None] * stride_k2
+        k = tl.load(k_ptrs, mask=(offs_k[None, :] < seq_k) & (offs_d[:, None] < head_dim), other=0.0)
+        
+        # dot(q, k.T)
+        qk = tl.sum(q[:, None] * k, axis=0) * scale
+        qk = tl.where(offs_k < seq_k, qk, float("-inf"))
+        
+        m_curr = tl.max(qk, axis=0)
+        m_new = tl.maximum(m_prev, m_curr)
+        
+        p = tl.exp(qk - m_new)
+        alpha = tl.exp(m_prev - m_new)
+        l_curr = tl.sum(p, axis=0)
+        l_new = alpha * l_prev + l_curr
+        
+        # Load V
+        v_ptrs = v_ptr + pid_bh * stride_v0 + offs_k[:, None] * stride_v1 + offs_d[None, :] * stride_v2
+        v = tl.load(v_ptrs, mask=(offs_k[:, None] < seq_k) & (offs_d[None, :] < head_dim), other=0.0)
+        
+        acc = acc * alpha + tl.sum(p[:, None] * v, axis=0)
+        
+        m_prev = m_new
+        l_prev = l_new
+        
+    out = acc / l_prev
+    out_ptrs = output_ptr + pid_bh * stride_o0 + offs_d * stride_o2
+    tl.store(out_ptrs, out, mask=offs_d < head_dim)
+
+
 @triton.autotune(
     configs=[
+        triton.Config({"BLOCK_Q": 32, "BLOCK_K": 32}, num_warps=4, num_stages=2),
         triton.Config({"BLOCK_Q": 16, "BLOCK_K": 64}, num_warps=2, num_stages=3),
-        triton.Config({"BLOCK_Q": 64, "BLOCK_K": 64}, num_warps=4, num_stages=3),
-        triton.Config({"BLOCK_Q": 128, "BLOCK_K": 128}, num_warps=8, num_stages=3),
         triton.Config({"BLOCK_Q": 64, "BLOCK_K": 128}, num_warps=4, num_stages=4),
         triton.Config({"BLOCK_Q": 128, "BLOCK_K": 64}, num_warps=4, num_stages=4),
+        triton.Config({"BLOCK_Q": 128, "BLOCK_K": 128}, num_warps=8, num_stages=3),
     ],
-    key=["seq_q", "seq_k"],
+    key=["seq_q", "seq_k", "head_dim"],
 )
 @triton.jit
 def attention_fused_kernel(
@@ -403,6 +464,30 @@ def scaled_dot_product_attention(
     )
 
     if use_triton:
+        if seq_q == 1:
+            # Optimized decoding path
+            q_flat = q.reshape(batch * num_heads, head_dim).to(torch.float32)
+            k_flat = k.reshape(batch * num_heads, seq_k, head_dim).to(torch.float32)
+            v_flat = v.reshape(batch * num_heads, seq_k, head_dim).to(torch.float32)
+            
+            output = torch.empty((batch * num_heads, head_dim), dtype=torch.float32, device=q.device)
+            
+            # Use fixed block size for decoding (can also be autotuned)
+            BLOCK_K = 128 if seq_k > 128 else next_power_of_two(seq_k)
+            
+            attention_decode_kernel[(batch * num_heads,)](
+                q_flat, k_flat, v_flat, output,
+                float(scale),
+                seq_k, head_dim,
+                q_flat.stride(0), 0, q_flat.stride(1),
+                k_flat.stride(0), k_flat.stride(1), k_flat.stride(2),
+                v_flat.stride(0), v_flat.stride(1), v_flat.stride(2),
+                output.stride(0), 0, output.stride(1),
+                BLOCK_D=head_dim_padded,
+                BLOCK_K=BLOCK_K
+            )
+            return output.reshape(batch, num_heads, 1, head_dim).to(q.dtype)
+
         use_fused_attention = True
         if use_fused_attention:
             q_flat = q.reshape(batch * num_heads, seq_q, head_dim).to(torch.float32)
