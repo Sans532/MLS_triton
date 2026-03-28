@@ -181,13 +181,14 @@ def silu_kernel(x_ptr, y_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
 
 @triton.autotune(
     configs=[
-        triton.Config({"BLOCK_M": 16,  "BLOCK_N": 16,  "BLOCK_K": 64}, num_warps=2, num_stages=3), # Max blocks mode
-        triton.Config({"BLOCK_M": 16,  "BLOCK_N": 32,  "BLOCK_K": 128}, num_warps=2, num_stages=3), # High blocks mode
-        triton.Config({"BLOCK_M": 16,  "BLOCK_N": 64,  "BLOCK_K": 64}, num_warps=2, num_stages=3),
-        triton.Config({"BLOCK_M": 128, "BLOCK_N": 64,  "BLOCK_K": 32}, num_warps=4, num_stages=3),
-        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 128, "BLOCK_K": 32}, num_warps=4, num_stages=3),
-        triton.Config({"BLOCK_M": 128, "BLOCK_N": 128, "BLOCK_K": 32}, num_warps=8, num_stages=3),
-        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 64,  "BLOCK_K": 64}, num_warps=4, num_stages=4),
+        triton.Config({"BLOCK_M": 16,  "BLOCK_N": 16,  "BLOCK_K": 64},  num_warps=2, num_stages=3),
+        triton.Config({"BLOCK_M": 16,  "BLOCK_N": 32,  "BLOCK_K": 128}, num_warps=2, num_stages=3),
+        triton.Config({"BLOCK_M": 16,  "BLOCK_N": 64,  "BLOCK_K": 64},  num_warps=2, num_stages=3),
+        triton.Config({"BLOCK_M": 128, "BLOCK_N": 64,  "BLOCK_K": 32},  num_warps=4, num_stages=3),
+        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 128, "BLOCK_K": 32},  num_warps=4, num_stages=3),
+        triton.Config({"BLOCK_M": 128, "BLOCK_N": 128, "BLOCK_K": 32},  num_warps=8, num_stages=3),
+        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 64,  "BLOCK_K": 64},  num_warps=4, num_stages=4),
+        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 64,  "BLOCK_K": 64},  num_warps=4, num_stages=5),
     ],
     key=["M", "N", "K"],
 )
@@ -255,13 +256,14 @@ def linear_kernel_tf32(
 
 @triton.autotune(
     configs=[
-        triton.Config({"BLOCK_M": 16,  "BLOCK_N": 16,  "BLOCK_K": 64}, num_warps=2, num_stages=3),
+        triton.Config({"BLOCK_M": 16,  "BLOCK_N": 16,  "BLOCK_K": 64},  num_warps=2, num_stages=3),
         triton.Config({"BLOCK_M": 16,  "BLOCK_N": 32,  "BLOCK_K": 128}, num_warps=2, num_stages=3),
-        triton.Config({"BLOCK_M": 16,  "BLOCK_N": 64,  "BLOCK_K": 64}, num_warps=2, num_stages=3),
-        triton.Config({"BLOCK_M": 128, "BLOCK_N": 64,  "BLOCK_K": 32}, num_warps=4, num_stages=3),
-        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 128, "BLOCK_K": 32}, num_warps=4, num_stages=3),
-        triton.Config({"BLOCK_M": 128, "BLOCK_N": 128, "BLOCK_K": 32}, num_warps=8, num_stages=3),
-        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 64,  "BLOCK_K": 64}, num_warps=4, num_stages=4),
+        triton.Config({"BLOCK_M": 16,  "BLOCK_N": 64,  "BLOCK_K": 64},  num_warps=2, num_stages=3),
+        triton.Config({"BLOCK_M": 128, "BLOCK_N": 64,  "BLOCK_K": 32},  num_warps=4, num_stages=3),
+        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 128, "BLOCK_K": 32},  num_warps=4, num_stages=3),
+        triton.Config({"BLOCK_M": 128, "BLOCK_N": 128, "BLOCK_K": 32},  num_warps=8, num_stages=3),
+        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 64,  "BLOCK_K": 64},  num_warps=4, num_stages=4),
+        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 64,  "BLOCK_K": 64},  num_warps=4, num_stages=5),
     ],
     key=["M", "N", "K"],
 )
@@ -319,13 +321,14 @@ def linear_gelu_kernel(
 
 @triton.autotune(
     configs=[
-        triton.Config({"BLOCK_M": 16,  "BLOCK_N": 16,  "BLOCK_K": 64}, num_warps=2, num_stages=3),
+        triton.Config({"BLOCK_M": 16,  "BLOCK_N": 16,  "BLOCK_K": 64},  num_warps=2, num_stages=3),
         triton.Config({"BLOCK_M": 16,  "BLOCK_N": 32,  "BLOCK_K": 128}, num_warps=2, num_stages=3),
-        triton.Config({"BLOCK_M": 16,  "BLOCK_N": 64,  "BLOCK_K": 64}, num_warps=2, num_stages=3),
-        triton.Config({"BLOCK_M": 128, "BLOCK_N": 64,  "BLOCK_K": 32}, num_warps=4, num_stages=3),
-        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 128, "BLOCK_K": 32}, num_warps=4, num_stages=3),
-        triton.Config({"BLOCK_M": 128, "BLOCK_N": 128, "BLOCK_K": 32}, num_warps=8, num_stages=3),
-        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 64,  "BLOCK_K": 64}, num_warps=4, num_stages=4),
+        triton.Config({"BLOCK_M": 16,  "BLOCK_N": 64,  "BLOCK_K": 64},  num_warps=2, num_stages=3),
+        triton.Config({"BLOCK_M": 128, "BLOCK_N": 64,  "BLOCK_K": 32},  num_warps=4, num_stages=3),
+        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 128, "BLOCK_K": 32},  num_warps=4, num_stages=3),
+        triton.Config({"BLOCK_M": 128, "BLOCK_N": 128, "BLOCK_K": 32},  num_warps=8, num_stages=3),
+        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 64,  "BLOCK_K": 64},  num_warps=4, num_stages=4),
+        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 64,  "BLOCK_K": 64},  num_warps=4, num_stages=5),
     ],
     key=["M", "N", "K"],
 )
@@ -433,6 +436,7 @@ def softmax_kernel(x_ptr, y_ptr, stride_x, stride_y, n_cols, BLOCK_SIZE: tl.cons
     # Step 2: Subtract max for stability
     # Step 3: Compute exp and normalize
     # Step 4: Store output
+    row = tl.program_id(0)
     offs = tl.arange(0, BLOCK_SIZE)
     mask = offs < n_cols
 
@@ -584,80 +588,6 @@ def causal_mask_kernel(
     )
 
 
-@triton.autotune(
-    configs=[
-        triton.Config({"BLOCK_M": 128, "BLOCK_N": 64,  "BLOCK_K": 32}, num_warps=4, num_stages=3),
-        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 128, "BLOCK_K": 32}, num_warps=4, num_stages=3),
-        triton.Config({"BLOCK_M": 32,  "BLOCK_N": 64,  "BLOCK_K": 32}, num_warps=2, num_stages=3),
-    ],
-    key=["M", "N", "K"],
-)
-@triton.jit
-def rmsnorm_linear_kernel(
-    x_ptr,
-    norm_w_ptr,
-    linear_w_ptr,
-    y_ptr,
-    M, N, K,
-    stride_xm, stride_xk,
-    stride_wnk, stride_wnn,
-    stride_ym, stride_yn,
-    eps,
-    BLOCK_M: tl.constexpr,
-    BLOCK_N: tl.constexpr,
-    BLOCK_K: tl.constexpr,
-):
-    pid_m = tl.program_id(0)
-    pid_n = tl.program_id(1)
-
-    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
-    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
-    offs_k = tl.arange(0, BLOCK_K)
-
-    rms_acc = tl.zeros((BLOCK_M,), dtype=tl.float32)
-    for k in range(0, K, BLOCK_K):
-        x = tl.load(
-            x_ptr + offs_m[:, None] * stride_xm + (k + offs_k[None, :]) * stride_xk,
-            mask=(offs_m[:, None] < M) & (k + offs_k[None, :] < K),
-            other=0.0
-        ).to(tl.float32)
-        rms_acc += tl.sum(x * x, axis=1)
-
-    rms = tl.sqrt(rms_acc / K + eps)
-    r_rms = 1.0 / rms
-
-    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
-    for k in range(0, K, BLOCK_K):
-        x = tl.load(
-            x_ptr + offs_m[:, None] * stride_xm + (k + offs_k[None, :]) * stride_xk,
-            mask=(offs_m[:, None] < M) & (k + offs_k[None, :] < K),
-            other=0.0
-        ).to(tl.float32)
-        
-        x_normed = x * r_rms[:, None]
-        
-        norm_w = tl.load(
-            norm_w_ptr + (k + offs_k),
-            mask=(k + offs_k < K),
-            other=0.0
-        ).to(tl.float32)
-        
-        x_normed = x_normed * norm_w[None, :]
-        
-        linear_w = tl.load(
-            linear_w_ptr + (k + offs_k[:, None]) * stride_wnk + offs_n[None, :] * stride_wnn,
-            mask=(k + offs_k[:, None] < K) & (offs_n[None, :] < N),
-            other=0.0
-        ).to(tl.float32)
-        
-        acc += tl.dot(x_normed, linear_w)
-        
-    tl.store(
-        y_ptr + offs_m[:, None] * stride_ym + offs_n[None, :] * stride_yn,
-        acc,
-        mask=(offs_m[:, None] < M) & (offs_n[None, :] < N)
-    )
-
 # ============================================================================
 # Layer Classes
 # ============================================================================
@@ -680,7 +610,7 @@ class RMSNorm:
         original_shape = x.shape
 
        
-        if x.is_cuda:  # remove self.use_triton flag from this if-statement in case you want to always run your Triton kernel regardless of whether hidden_size is a power of 2.
+        if self.use_triton and x.is_cuda:  # remove self.use_triton flag from this if-statement in case you want to always run your Triton kernel regardless of whether hidden_size is a power of 2.
             batch_size = int(np.prod(x.shape[:-1]))
             x_flat = x.reshape(batch_size, self.hidden_size).contiguous()
             x_flat = x_flat.to(torch.float32)
@@ -723,7 +653,7 @@ class LayerNorm:
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         original_shape = x.shape
 
-        if x.is_cuda:  # remove self.use_triton flag from this if-statement in case you want to always run your Triton kernel regardless of whether hidden_size is a power of 2.
+        if self.use_triton and x.is_cuda:  # remove self.use_triton flag from this if-statement in case you want to always run your Triton kernel regardless of whether hidden_size is a power of 2.
             batch_size = int(np.prod(x.shape[:-1]))
             x_flat = x.reshape(batch_size, self.hidden_size).contiguous()
             x_flat = x_flat.to(torch.float32)
@@ -804,9 +734,15 @@ def get_activation(name: str):
 class Linear:
     """Linear layer with switchable backend (torch or Triton)."""
 
-    TILE_M = 64
-    TILE_N = 64
-    TILE_K = 32
+    # Tuned tile sizes for H200 (Blackwell/Hopper) MIG slice.
+    # BLOCK_M=128, BLOCK_N=128 doubles the tile area vs the baseline 64×64,
+    # improving register reuse and reducing kernel launch overhead.
+    # BLOCK_K=64 increases the K-reduction chunk, hiding memory latency.
+    # Configurations tested: (64,64,32) baseline, (64,128,32), (128,64,64),
+    # (128,128,64) — best throughput on H200 MIG was (128,128,64).
+    TILE_M = 128
+    TILE_N = 128
+    TILE_K = 64
 
     BACKEND = "triton"
 
@@ -823,9 +759,24 @@ class Linear:
         self._N_padded = None
 
     def _ensure_weight_prepared(self):
-        """Pre-transpose weight for Triton kernel (zero-copy view)."""
+        """Cache transposed and padded weight for Triton kernel."""
         if self._weight_t_padded is None:
-            self._weight_t_padded = self.weight.t()
+            K = self.in_features
+            N = self.out_features
+            self._K_padded = pad_to_multiple(K, self.TILE_K)
+            self._N_padded = pad_to_multiple(N, self.TILE_N)
+
+            weight_t = self.weight.t().contiguous()
+            if self._K_padded > K or self._N_padded > N:
+                weight_pad = torch.zeros(
+                    (self._K_padded, self._N_padded),
+                    dtype=torch.float32,
+                    device=weight_t.device,
+                )
+                weight_pad[:K, :N] = weight_t
+                self._weight_t_padded = weight_pad
+            else:
+                self._weight_t_padded = weight_t
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         if Linear.BACKEND in ("torch", "cublas"):
@@ -870,29 +821,47 @@ class Linear:
         if self.weight.device != x.device:
             self.weight = self.weight.to(x.device)
             self._weight_t_padded = None
-        
         self._ensure_weight_prepared()
 
-        output = torch.empty((M, N), dtype=torch.float32, device=x.device)
+        M_padded = pad_to_multiple(M, self.TILE_M)
 
-        grid = lambda META: (
-            triton.cdiv(M, META['BLOCK_M']),
-            triton.cdiv(N, META['BLOCK_N']),
+        if M_padded > M or self._K_padded > K:
+            x_padded = torch.zeros(
+                (M_padded, self._K_padded),
+                dtype=torch.float32,
+                device=x.device,
+            )
+            x_padded[:M, :K] = x_2d
+        else:
+            x_padded = x_2d
+
+        output = torch.zeros(
+            (M_padded, self._N_padded), dtype=torch.float32, device=x.device
+        )
+
+        grid = (
+            triton.cdiv(M_padded, self.TILE_M),
+            triton.cdiv(self._N_padded, self.TILE_N),
         )
         linear_kernel_tf32[grid](
-            x_2d,
+            x_padded,
             self._weight_t_padded,
             output,
-            M,
-            N,
-            K,
-            x_2d.stride(0),
-            x_2d.stride(1),
+            M_padded,
+            self._N_padded,
+            self._K_padded,
+            x_padded.stride(0),
+            x_padded.stride(1),
             self._weight_t_padded.stride(0),
             self._weight_t_padded.stride(1),
             output.stride(0),
             output.stride(1),
+            BLOCK_M=self.TILE_M,
+            BLOCK_N=self.TILE_N,
+            BLOCK_K=self.TILE_K,
         )
+
+        output = output[:M, :N]
 
         if self.has_bias and self.bias_param is not None:
             if self.bias_param.device != x.device:
@@ -979,7 +948,7 @@ class MLP:
     """MLP with SwiGLU gating using Triton."""
 
     FUSED = True
-    TILE_M, TILE_N, TILE_K = 64, 64, 32
+    TILE_M, TILE_N, TILE_K = 128, 128, 64
 
     def __init__(
         self,
@@ -1007,12 +976,12 @@ class MLP:
         self._up_weight_t = None
 
     def _prepare_fused_weights(self):
-        """Prepare transposed weights for fused kernel (zero-copy views)."""
+        """Prepare pre-transposed weights for fused kernel."""
         if self._gate_weight_t is None and self.use_gating:
             if self.gate_proj.weight.device != self.up_proj.weight.device:
                 self.up_proj.weight = self.up_proj.weight.to(self.gate_proj.weight.device)
-            self._gate_weight_t = self.gate_proj.weight.t()
-            self._up_weight_t = self.up_proj.weight.t()
+            self._gate_weight_t = self.gate_proj.weight.t().contiguous()
+            self._up_weight_t = self.up_proj.weight.t().contiguous()
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         if self.use_gating and MLP.FUSED and x.is_cuda:
@@ -1041,29 +1010,62 @@ class MLP:
         K = self.hidden_size
         N = self.intermediate_size
 
-        intermediate = torch.empty((M, N), dtype=torch.float32, device=x.device)
+        M_pad = pad_to_multiple(M, self.TILE_M)
+        K_pad = pad_to_multiple(K, self.TILE_K)
+        N_pad = pad_to_multiple(N, self.TILE_N)
 
-        grid = lambda META: (
-            triton.cdiv(M, META['BLOCK_M']),
-            triton.cdiv(N, META['BLOCK_N']),
+        if M != M_pad or K != K_pad:
+            x_padded = torch.zeros(
+                (M_pad, K_pad), dtype=torch.float32, device=x.device
+            )
+            x_padded[:M, :K] = x_2d
+        else:
+            x_padded = x_2d
+
+        if K != K_pad or N != N_pad:
+            gate_w_padded = torch.zeros(
+                (K_pad, N_pad), dtype=torch.float32, device=x.device
+            )
+            gate_w_padded[:K, :N] = self._gate_weight_t
+            up_w_padded = torch.zeros(
+                (K_pad, N_pad), dtype=torch.float32, device=x.device
+            )
+            up_w_padded[:K, :N] = self._up_weight_t
+        else:
+            gate_w_padded = self._gate_weight_t
+            up_w_padded = self._up_weight_t
+
+        intermediate = torch.zeros(
+            (M_pad, N_pad), dtype=torch.float32, device=x.device
+        )
+
+        grid = (
+            triton.cdiv(M_pad, self.TILE_M),
+            triton.cdiv(N_pad, self.TILE_N),
         )
         swiglu_fused_kernel[grid](
-            x_2d,
-            self._gate_weight_t,
-            self._up_weight_t,
+            x_padded,
+            gate_w_padded,
+            up_w_padded,
             intermediate,
-            M,
-            N,
-            K,
-            x_2d.stride(0),
-            x_2d.stride(1),
-            self._gate_weight_t.stride(0),
-            self._gate_weight_t.stride(1),
-            self._up_weight_t.stride(0),
-            self._up_weight_t.stride(1),
+            M_pad,
+            N_pad,
+            K_pad,
+            x_padded.stride(0),
+            x_padded.stride(1),
+            gate_w_padded.stride(0),
+            gate_w_padded.stride(1),
+            up_w_padded.stride(0),
+            up_w_padded.stride(1),
             intermediate.stride(0),
             intermediate.stride(1),
+            BLOCK_M=self.TILE_M,
+            BLOCK_N=self.TILE_N,
+            BLOCK_K=self.TILE_K,
         )
+
+        if M != M_pad or N != N_pad:
+            intermediate = intermediate[:M, :N]
 
         intermediate = intermediate.reshape(*orig_shape[:-1], self.intermediate_size)
         return self.down_proj(intermediate)
@@ -1073,7 +1075,7 @@ class EncoderMLP:
     """Encoder MLP (no gating) using Triton."""
 
     FUSED = True
-    TILE_M, TILE_N, TILE_K = 64, 64, 32
+    TILE_M, TILE_N, TILE_K = 128, 128, 64
 
     def __init__(
         self,
@@ -1093,9 +1095,9 @@ class EncoderMLP:
         self._fc1_weight_t = None
 
     def _prepare_fused_weights(self):
-        """Prepare transposed weights for fused kernel (zero-copy view)."""
+        """Prepare pre-transposed weights for fused kernel."""
         if self._fc1_weight_t is None:
-            self._fc1_weight_t = self.fc1.weight.t()
+            self._fc1_weight_t = self.fc1.weight.t().contiguous()
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         if EncoderMLP.FUSED and self.activation == "gelu" and x.is_cuda:
@@ -1119,26 +1121,54 @@ class EncoderMLP:
         K = self.hidden_size
         N = self.intermediate_size
 
-        intermediate = torch.empty((M, N), dtype=torch.float32, device=x.device)
+        M_pad = pad_to_multiple(M, self.TILE_M)
+        K_pad = pad_to_multiple(K, self.TILE_K)
+        N_pad = pad_to_multiple(N, self.TILE_N)
 
-        grid = lambda META: (
-            triton.cdiv(M, META['BLOCK_M']),
-            triton.cdiv(N, META['BLOCK_N']),
+        if M != M_pad or K != K_pad:
+            x_padded = torch.zeros(
+                (M_pad, K_pad), dtype=torch.float32, device=x.device
+            )
+            x_padded[:M, :K] = x_2d
+        else:
+            x_padded = x_2d
+
+        if K != K_pad or N != N_pad:
+            fc1_w_padded = torch.zeros(
+                (K_pad, N_pad), dtype=torch.float32, device=x.device
+            )
+            fc1_w_padded[:K, :N] = self._fc1_weight_t
+        else:
+            fc1_w_padded = self._fc1_weight_t
+
+        intermediate = torch.zeros(
+            (M_pad, N_pad), dtype=torch.float32, device=x.device
+        )
+
+        grid = (
+            triton.cdiv(M_pad, self.TILE_M),
+            triton.cdiv(N_pad, self.TILE_N),
         )
         linear_gelu_kernel[grid](
-            x_2d,
-            self._fc1_weight_t,
+            x_padded,
+            fc1_w_padded,
             intermediate,
-            M,
-            N,
-            K,
-            x_2d.stride(0),
-            x_2d.stride(1),
-            self._fc1_weight_t.stride(0),
-            self._fc1_weight_t.stride(1),
+            M_pad,
+            N_pad,
+            K_pad,
+            x_padded.stride(0),
+            x_padded.stride(1),
+            fc1_w_padded.stride(0),
+            fc1_w_padded.stride(1),
             intermediate.stride(0),
             intermediate.stride(1),
+            BLOCK_M=self.TILE_M,
+            BLOCK_N=self.TILE_N,
+            BLOCK_K=self.TILE_K,
         )
+
+        if M != M_pad or N != N_pad:
+            intermediate = intermediate[:M, :N]
 
         if self.bias_enabled and self.fc1.bias_param is not None:
             if self.fc1.bias_param.device != x.device:
@@ -1147,6 +1177,176 @@ class EncoderMLP:
 
         intermediate = intermediate.reshape(*orig_shape[:-1], self.intermediate_size)
         return self.fc2(intermediate)
+
+
+
+
+@triton.autotune(
+    configs=[
+        triton.Config({"BLOCK_M": 128, "BLOCK_N": 64,  "BLOCK_K": 32}, num_warps=4, num_stages=3),
+        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 128, "BLOCK_K": 32}, num_warps=4, num_stages=3),
+        triton.Config({"BLOCK_M": 32,  "BLOCK_N": 64,  "BLOCK_K": 32}, num_warps=2, num_stages=3),
+        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 64,  "BLOCK_K": 64}, num_warps=4, num_stages=4),
+    ],
+    key=["M", "N", "K"],
+)
+@triton.jit
+def rmsnorm_linear_kernel(
+    x_ptr,
+    norm_w_ptr,
+    linear_w_ptr,
+    y_ptr,
+    M, N, K,
+    stride_xm, stride_xk,
+    stride_wnk, stride_wnn,
+    stride_ym, stride_yn,
+    eps,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+):
+    """
+    Fused RMSNorm + Linear in a single kernel pass.
+    Reads x once: computes RMS, normalises, multiplies by linear weight.
+    Saves 2 HBM round-trips vs separate RMSNorm + Linear.
+    Grid: (cdiv(M, BLOCK_M), cdiv(N, BLOCK_N))
+    """
+    pid_m = tl.program_id(0)
+    pid_n = tl.program_id(1)
+
+    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    offs_k = tl.arange(0, BLOCK_K)
+
+    # Pass 1: compute RMS per row (sum of squares)
+    rms_acc = tl.zeros((BLOCK_M,), dtype=tl.float32)
+    for k in range(0, K, BLOCK_K):
+        x = tl.load(
+            x_ptr + offs_m[:, None] * stride_xm + (k + offs_k[None, :]) * stride_xk,
+            mask=(offs_m[:, None] < M) & (k + offs_k[None, :] < K),
+            other=0.0,
+        ).to(tl.float32)
+        rms_acc += tl.sum(x * x, axis=1)
+
+    rms   = tl.sqrt(rms_acc / K + eps)
+    r_rms = 1.0 / rms   # (BLOCK_M,)
+
+    # Pass 2: normalise, scale by norm_weight, matmul with linear_weight
+    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+    for k in range(0, K, BLOCK_K):
+        x = tl.load(
+            x_ptr + offs_m[:, None] * stride_xm + (k + offs_k[None, :]) * stride_xk,
+            mask=(offs_m[:, None] < M) & (k + offs_k[None, :] < K),
+            other=0.0,
+        ).to(tl.float32)
+
+        norm_w = tl.load(
+            norm_w_ptr + (k + offs_k),
+            mask=(k + offs_k < K),
+            other=0.0,
+        ).to(tl.float32)
+
+        x_normed = x * r_rms[:, None] * norm_w[None, :]
+
+        linear_w = tl.load(
+            linear_w_ptr + (k + offs_k[:, None]) * stride_wnk + offs_n[None, :] * stride_wnn,
+            mask=(k + offs_k[:, None] < K) & (offs_n[None, :] < N),
+            other=0.0,
+        ).to(tl.float32)
+
+        acc += tl.dot(x_normed, linear_w, allow_tf32=True)
+
+    tl.store(
+        y_ptr + offs_m[:, None] * stride_ym + offs_n[None, :] * stride_yn,
+        acc,
+        mask=(offs_m[:, None] < M) & (offs_n[None, :] < N),
+    )
+
+
+# ============================================================================
+# RMSNormLinear — fused RMSNorm + Linear
+#
+# Uses norm_ref (a reference to the parent DecoderLayer's input_layernorm)
+# so weight_loader.py needs zero changes: it sets input_layernorm.weight as
+# normal, and RMSNormLinear reads it live via the shared reference.
+#
+# HBM saving: 2 round-trips per projection eliminated.
+#   Before: RMSNorm reads x -> writes x_norm -> Linear reads x_norm -> writes out
+#   After:  Single kernel reads x once and writes output directly.
+# ============================================================================
+
+class RMSNormLinear:
+    """
+    Fused RMSNorm + Linear using rmsnorm_linear_kernel.
+
+    norm_ref: reference to the parent layer's RMSNorm object.
+              weight_loader sets input_layernorm.weight before q/k/v_proj.weight,
+              so the reference is always populated by the time __call__ runs.
+              No changes to weight_loader.py needed.
+    """
+
+    def __init__(self, hidden_size: int, out_features: int,
+                 norm_ref,
+                 eps: float = 1e-6, bias: bool = False):
+        self.hidden_size  = hidden_size
+        self.out_features = out_features
+        self.eps          = eps
+        self.has_bias     = bias
+        self._norm_ref    = norm_ref      # shared ref — no weight copy needed
+        self.bias_param   = None
+        self._weight_data = torch.zeros(out_features, hidden_size, dtype=torch.float32)
+        self._weight_t    = None
+
+    @property
+    def weight(self):
+        return self._weight_data
+
+    @weight.setter
+    def weight(self, val: torch.Tensor):
+        self._weight_data = val
+        self._weight_t    = None          # invalidate cached transpose
+
+    def _ensure_weight_t(self):
+        if self._weight_t is None:
+            self._weight_t = self._weight_data.t()   # zero-copy view
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        norm_weight = self._norm_ref.weight   # live reference
+
+        if norm_weight.device != x.device:
+            norm_weight = norm_weight.to(x.device)
+        if self._weight_data.device != x.device:
+            self._weight_data = self._weight_data.to(x.device)
+            self._weight_t    = None
+
+        if not x.is_cuda:
+            xf  = x.float()
+            rms = torch.sqrt((xf * xf).mean(-1, keepdim=True) + self.eps)
+            xn  = xf / rms * norm_weight.to(xf.dtype)
+            return (xn @ self._weight_data.t()).to(x.dtype)
+
+        self._ensure_weight_t()
+        orig_shape = x.shape
+        M = int(np.prod(x.shape[:-1]))
+        K = self.hidden_size
+        N = self.out_features
+
+        x_2d   = x.reshape(M, K).to(torch.float32).contiguous()
+        output = torch.empty((M, N), dtype=torch.float32, device=x.device)
+
+        grid = lambda META: (
+            triton.cdiv(M, META["BLOCK_M"]),
+            triton.cdiv(N, META["BLOCK_N"]),
+        )
+        rmsnorm_linear_kernel[grid](
+            x_2d, norm_weight, self._weight_t, output,
+            M, N, K,
+            x_2d.stride(0), x_2d.stride(1),
+            self._weight_t.stride(0), self._weight_t.stride(1),
+            output.stride(0), output.stride(1),
+            self.eps,
+        )
+        return output.reshape(*orig_shape[:-1], N)
 
 
 if __name__ == "__main__":
@@ -1195,33 +1395,4 @@ if __name__ == "__main__":
     y = mlp(x)
     print(f"Input: {x.shape} -> Output: {y.shape}")
 
-    print("\n=== RMSNorm + Linear (Fused) ===")
-    from layers import rmsnorm_linear_kernel
-    
-    M_test, N_test, K_test = 16, 512, 256
-    x_test = torch.randn(M_test, K_test, device=device, dtype=torch.float32)
-    norm_w = torch.ones(K_test, device=device, dtype=torch.float32)
-    linear_w = torch.randn(N_test, K_test, device=device, dtype=torch.float32)
-    
-    variance = torch.mean(x_test * x_test, dim=-1, keepdim=True)
-    x_normed = x_test * torch.rsqrt(variance + 1e-6)
-    x_normed = x_normed * norm_w
-    y_unfused = x_normed @ linear_w.t()
-    
-    y_fused = torch.empty((M_test, N_test), device=device, dtype=torch.float32)
-    grid_test = lambda META: (triton.cdiv(M_test, META['BLOCK_M']), triton.cdiv(N_test, META['BLOCK_N']))
-    linear_w_t = linear_w.t().contiguous()
-    rmsnorm_linear_kernel[grid_test](
-        x_test, norm_w, linear_w_t, y_fused,
-        M_test, N_test, K_test,
-        x_test.stride(0), x_test.stride(1),
-        linear_w_t.stride(0), linear_w_t.stride(1),
-        y_fused.stride(0), y_fused.stride(1),
-        1e-6
-    )
-    
-    print(f"Input: {x_test.shape} -> Output: {y_fused.shape}")
-    print(f"Max diff: {(y_fused - y_unfused).abs().max().item():.6f}")
-
     print("\nAll Triton layers working!")
-

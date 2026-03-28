@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 # Import Triton components
 from layers import (
-    RMSNorm, LayerNorm, Linear, Embedding, MLP,
+    RMSNorm, LayerNorm, Linear, RMSNormLinear, Embedding, MLP,
     gelu, silu, softmax, get_stream
 )
 from rope import RotaryEmbedding, apply_rotary_pos_emb
@@ -222,13 +222,20 @@ class DecoderLayer:
         self.rope = rope
 
         # Layer norms
+        # input_layernorm kept as RMSNorm for weight_loader compatibility
+        # (norm weight is also copied into each RMSNormLinear below)
         self.input_layernorm = RMSNorm(hidden_size)
         self.post_attention_layernorm = RMSNorm(hidden_size)
 
-        # Attention projections (no bias for Llama-style)
-        self.q_proj = Linear(hidden_size, num_heads * self.head_dim, bias=False)
-        self.k_proj = Linear(hidden_size, num_kv_heads * self.head_dim, bias=False)
-        self.v_proj = Linear(hidden_size, num_kv_heads * self.head_dim, bias=False)
+        # Fused RMSNorm + Q/K/V projections.
+        # norm_ref=self.input_layernorm lets RMSNormLinear read the norm weight
+        # live without weight_loader.py needing any changes.
+        self.q_proj = RMSNormLinear(hidden_size, num_heads * self.head_dim,
+                                     norm_ref=self.input_layernorm)
+        self.k_proj = RMSNormLinear(hidden_size, num_kv_heads * self.head_dim,
+                                     norm_ref=self.input_layernorm)
+        self.v_proj = RMSNormLinear(hidden_size, num_kv_heads * self.head_dim,
+                                     norm_ref=self.input_layernorm)
         self.o_proj = Linear(num_heads * self.head_dim, hidden_size, bias=False)
 
         # MLP (SwiGLU)
@@ -267,11 +274,11 @@ class DecoderLayer:
         """
         batch, seq_len, _ = hidden_states.shape
 
-        # Self-attention with pre-norm
+        # Self-attention with fused RMSNorm+projection
+        # RMSNormLinear applies layernorm internally — no separate norm pass needed.
         residual = hidden_states
-        hidden_states = self.input_layernorm(hidden_states)
 
-        # Project to Q, K, V
+        # Fused RMSNorm + Q/K/V: each reads hidden_states once (no intermediate write)
         q = self.q_proj(hidden_states)
         k = self.k_proj(hidden_states)
         v = self.v_proj(hidden_states)
@@ -337,11 +344,10 @@ class DecoderLayer:
         batch, seq_len, _ = hidden_states.shape
         key_buffer, value_buffer = kv_buffer
 
-        # Self-attention with pre-norm
+        # Self-attention with fused RMSNorm+projection
         residual = hidden_states
-        hidden_states = self.input_layernorm(hidden_states)
 
-        # Project to Q, K, V
+        # Fused RMSNorm + Q/K/V projections
         q = self.q_proj(hidden_states)
         k = self.k_proj(hidden_states)
         v = self.v_proj(hidden_states)
@@ -351,7 +357,7 @@ class DecoderLayer:
         k = k.reshape(batch, seq_len, self.num_kv_heads, self.head_dim).permute(0, 2, 1, 3)
         v = v.reshape(batch, seq_len, self.num_kv_heads, self.head_dim).permute(0, 2, 1, 3)
 
-        # V8.2: Make V contiguous now (it won't be processed by RoPE)
+        # V8.2: Make V contiguous now
         v = v.contiguous()
 
         # Apply RoPE (creates contiguous Q/K outputs via concatenation)
