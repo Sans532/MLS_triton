@@ -744,7 +744,7 @@ class Linear:
     TILE_N = 128
     TILE_K = 64
 
-    BACKEND = "triton"
+    BACKEND = "auto"
 
     def __init__(self, in_features: int, out_features: int, bias: bool = True):
         self.in_features = in_features
@@ -767,7 +767,7 @@ class Linear:
             self._K_padded = pad_to_multiple(K, self.TILE_K)
             self._N_padded = pad_to_multiple(N, self.TILE_N)
 
-            weight_t = self.weight.t().contiguous()
+            weight_t = self.weight.t()
             if self._K_padded > K or self._N_padded > N:
                 weight_pad = torch.zeros(
                     (self._K_padded, self._N_padded),
@@ -823,7 +823,7 @@ class Linear:
             self.weight = self.weight.to(x.device)
             self._weight_t = None
         if self._weight_t is None:
-            self._weight_t = self.weight.t().contiguous()
+            self._weight_t = self.weight.t()  # zero-copy view; strides passed explicitly
 
         output = torch.empty((M, N), dtype=torch.float32, device=x.device)
 
@@ -959,8 +959,8 @@ class MLP:
         if self._gate_weight_t is None and self.use_gating:
             if self.gate_proj.weight.device != self.up_proj.weight.device:
                 self.up_proj.weight = self.up_proj.weight.to(self.gate_proj.weight.device)
-            self._gate_weight_t = self.gate_proj.weight.t().contiguous()
-            self._up_weight_t = self.up_proj.weight.t().contiguous()
+            self._gate_weight_t = self.gate_proj.weight.t()
+            self._up_weight_t = self.up_proj.weight.t()
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         if self.use_gating and MLP.FUSED and x.is_cuda:
@@ -1037,7 +1037,7 @@ class EncoderMLP:
     def _prepare_fused_weights(self):
         """Prepare pre-transposed weights for fused kernel."""
         if self._fc1_weight_t is None:
-            self._fc1_weight_t = self.fc1.weight.t().contiguous()
+            self._fc1_weight_t = self.fc1.weight.t()
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         if EncoderMLP.FUSED and self.activation == "gelu" and x.is_cuda:
