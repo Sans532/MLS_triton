@@ -757,6 +757,7 @@ class Linear:
         self._weight_t_padded = None
         self._K_padded = None
         self._N_padded = None
+        self._weight_t = None   # for autotuned path
 
     def _ensure_weight_prepared(self):
         """Cache transposed and padded weight for Triton kernel."""
@@ -808,7 +809,7 @@ class Linear:
         return output.reshape(*batch_dims, self.out_features)
 
     def _forward_triton(self, x: torch.Tensor) -> torch.Tensor:
-        """Triton matmul backend."""
+        """Triton matmul backend (autotuned — no explicit BLOCK sizes)."""
         original_shape = x.shape
         batch_dims = original_shape[:-1]
 
@@ -820,48 +821,26 @@ class Linear:
 
         if self.weight.device != x.device:
             self.weight = self.weight.to(x.device)
-            self._weight_t_padded = None
-        self._ensure_weight_prepared()
+            self._weight_t = None
+        if self._weight_t is None:
+            self._weight_t = self.weight.t().contiguous()
 
-        M_padded = pad_to_multiple(M, self.TILE_M)
+        output = torch.empty((M, N), dtype=torch.float32, device=x.device)
 
-        if M_padded > M or self._K_padded > K:
-            x_padded = torch.zeros(
-                (M_padded, self._K_padded),
-                dtype=torch.float32,
-                device=x.device,
-            )
-            x_padded[:M, :K] = x_2d
-        else:
-            x_padded = x_2d
-
-        output = torch.zeros(
-            (M_padded, self._N_padded), dtype=torch.float32, device=x.device
-        )
-
-        grid = (
-            triton.cdiv(M_padded, self.TILE_M),
-            triton.cdiv(self._N_padded, self.TILE_N),
+        # Grid uses META so autotuner can vary BLOCK_M/N/K freely
+        grid = lambda META: (
+            triton.cdiv(M, META["BLOCK_M"]),
+            triton.cdiv(N, META["BLOCK_N"]),
         )
         linear_kernel_tf32[grid](
-            x_padded,
-            self._weight_t_padded,
+            x_2d,
+            self._weight_t,
             output,
-            M_padded,
-            self._N_padded,
-            self._K_padded,
-            x_padded.stride(0),
-            x_padded.stride(1),
-            self._weight_t_padded.stride(0),
-            self._weight_t_padded.stride(1),
-            output.stride(0),
-            output.stride(1),
-            BLOCK_M=self.TILE_M,
-            BLOCK_N=self.TILE_N,
-            BLOCK_K=self.TILE_K,
+            M, N, K,
+            x_2d.stride(0),         x_2d.stride(1),
+            self._weight_t.stride(0), self._weight_t.stride(1),
+            output.stride(0),        output.stride(1),
         )
-
-        output = output[:M, :N]
 
         if self.has_bias and self.bias_param is not None:
             if self.bias_param.device != x.device:
@@ -1010,62 +989,23 @@ class MLP:
         K = self.hidden_size
         N = self.intermediate_size
 
-        M_pad = pad_to_multiple(M, self.TILE_M)
-        K_pad = pad_to_multiple(K, self.TILE_K)
-        N_pad = pad_to_multiple(N, self.TILE_N)
+        intermediate = torch.empty((M, N), dtype=torch.float32, device=x.device)
 
-        if M != M_pad or K != K_pad:
-            x_padded = torch.zeros(
-                (M_pad, K_pad), dtype=torch.float32, device=x.device
-            )
-            x_padded[:M, :K] = x_2d
-        else:
-            x_padded = x_2d
-
-        if K != K_pad or N != N_pad:
-            gate_w_padded = torch.zeros(
-                (K_pad, N_pad), dtype=torch.float32, device=x.device
-            )
-            gate_w_padded[:K, :N] = self._gate_weight_t
-            up_w_padded = torch.zeros(
-                (K_pad, N_pad), dtype=torch.float32, device=x.device
-            )
-            up_w_padded[:K, :N] = self._up_weight_t
-        else:
-            gate_w_padded = self._gate_weight_t
-            up_w_padded = self._up_weight_t
-
-        intermediate = torch.zeros(
-            (M_pad, N_pad), dtype=torch.float32, device=x.device
-        )
-
-        grid = (
-            triton.cdiv(M_pad, self.TILE_M),
-            triton.cdiv(N_pad, self.TILE_N),
+        grid = lambda META: (
+            triton.cdiv(M, META["BLOCK_M"]),
+            triton.cdiv(N, META["BLOCK_N"]),
         )
         swiglu_fused_kernel[grid](
-            x_padded,
-            gate_w_padded,
-            up_w_padded,
+            x_2d,
+            self._gate_weight_t,
+            self._up_weight_t,
             intermediate,
-            M_pad,
-            N_pad,
-            K_pad,
-            x_padded.stride(0),
-            x_padded.stride(1),
-            gate_w_padded.stride(0),
-            gate_w_padded.stride(1),
-            up_w_padded.stride(0),
-            up_w_padded.stride(1),
-            intermediate.stride(0),
-            intermediate.stride(1),
-            BLOCK_M=self.TILE_M,
-            BLOCK_N=self.TILE_N,
-            BLOCK_K=self.TILE_K,
+            M, N, K,
+            x_2d.stride(0),               x_2d.stride(1),
+            self._gate_weight_t.stride(0), self._gate_weight_t.stride(1),
+            self._up_weight_t.stride(0),   self._up_weight_t.stride(1),
+            intermediate.stride(0),        intermediate.stride(1),
         )
-
-        if M != M_pad or N != N_pad:
-            intermediate = intermediate[:M, :N]
 
         intermediate = intermediate.reshape(*orig_shape[:-1], self.intermediate_size)
         return self.down_proj(intermediate)
@@ -1121,54 +1061,20 @@ class EncoderMLP:
         K = self.hidden_size
         N = self.intermediate_size
 
-        M_pad = pad_to_multiple(M, self.TILE_M)
-        K_pad = pad_to_multiple(K, self.TILE_K)
-        N_pad = pad_to_multiple(N, self.TILE_N)
-
-        if M != M_pad or K != K_pad:
-            x_padded = torch.zeros(
-                (M_pad, K_pad), dtype=torch.float32, device=x.device
-            )
-            x_padded[:M, :K] = x_2d
-        else:
-            x_padded = x_2d
-
-        if K != K_pad or N != N_pad:
-            fc1_w_padded = torch.zeros(
-                (K_pad, N_pad), dtype=torch.float32, device=x.device
-            )
-            fc1_w_padded[:K, :N] = self._fc1_weight_t
-        else:
-            fc1_w_padded = self._fc1_weight_t
-
-        intermediate = torch.zeros(
-            (M_pad, N_pad), dtype=torch.float32, device=x.device
+        grid = lambda META: (
+            triton.cdiv(M, META["BLOCK_M"]),
+            triton.cdiv(N, META["BLOCK_N"]),
         )
-
-        grid = (
-            triton.cdiv(M_pad, self.TILE_M),
-            triton.cdiv(N_pad, self.TILE_N),
-        )
+        intermediate = torch.empty((M, N), dtype=torch.float32, device=x.device)
         linear_gelu_kernel[grid](
-            x_padded,
-            fc1_w_padded,
+            x_2d,
+            self._fc1_weight_t,
             intermediate,
-            M_pad,
-            N_pad,
-            K_pad,
-            x_padded.stride(0),
-            x_padded.stride(1),
-            fc1_w_padded.stride(0),
-            fc1_w_padded.stride(1),
-            intermediate.stride(0),
-            intermediate.stride(1),
-            BLOCK_M=self.TILE_M,
-            BLOCK_N=self.TILE_N,
-            BLOCK_K=self.TILE_K,
+            M, N, K,
+            x_2d.stride(0),              x_2d.stride(1),
+            self._fc1_weight_t.stride(0), self._fc1_weight_t.stride(1),
+            intermediate.stride(0),       intermediate.stride(1),
         )
-
-        if M != M_pad or N != N_pad:
-            intermediate = intermediate[:M, :N]
 
         if self.bias_enabled and self.fc1.bias_param is not None:
             if self.fc1.bias_param.device != x.device:
