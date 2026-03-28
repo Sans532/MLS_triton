@@ -804,11 +804,11 @@ def get_activation(name: str):
 class Linear:
     """Linear layer with switchable backend (torch or Triton)."""
 
-    TILE_M = 64
-    TILE_N = 64
-    TILE_K = 32
+    TILE_M = 1
+    TILE_N = 16
+    TILE_K = 16
 
-    BACKEND = "auto"
+    BACKEND = "triton"
 
     def __init__(self, in_features: int, out_features: int, bias: bool = True):
         self.in_features = in_features
