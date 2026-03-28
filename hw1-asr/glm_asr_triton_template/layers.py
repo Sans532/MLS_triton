@@ -680,7 +680,7 @@ class RMSNorm:
         original_shape = x.shape
 
        
-        if self.use_triton and x.is_cuda:  # remove self.use_triton flag from this if-statement in case you want to always run your Triton kernel regardless of whether hidden_size is a power of 2.
+        if x.is_cuda:  # remove self.use_triton flag from this if-statement in case you want to always run your Triton kernel regardless of whether hidden_size is a power of 2.
             batch_size = int(np.prod(x.shape[:-1]))
             x_flat = x.reshape(batch_size, self.hidden_size).contiguous()
             x_flat = x_flat.to(torch.float32)
@@ -723,7 +723,7 @@ class LayerNorm:
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         original_shape = x.shape
 
-        if self.use_triton and x.is_cuda:  # remove self.use_triton flag from this if-statement in case you want to always run your Triton kernel regardless of whether hidden_size is a power of 2.
+        if x.is_cuda:  # remove self.use_triton flag from this if-statement in case you want to always run your Triton kernel regardless of whether hidden_size is a power of 2.
             batch_size = int(np.prod(x.shape[:-1]))
             x_flat = x.reshape(batch_size, self.hidden_size).contiguous()
             x_flat = x_flat.to(torch.float32)
