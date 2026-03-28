@@ -804,9 +804,9 @@ def get_activation(name: str):
 class Linear:
     """Linear layer with switchable backend (torch or Triton)."""
 
-    TILE_M = 1
-    TILE_N = 16
-    TILE_K = 16
+    TILE_M = 64
+    TILE_N = 64
+    TILE_K = 32
 
     BACKEND = "triton"
 
