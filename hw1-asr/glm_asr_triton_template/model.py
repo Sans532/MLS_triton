@@ -701,6 +701,11 @@ class GlmAsrModel:
         if use_cache:
             hidden_states, present_key_values = result
             if use_fused and hidden_states.is_cuda:
+                if self.text_decoder.norm.weight.device != hidden_states.device:
+                    self.text_decoder.norm.weight = self.text_decoder.norm.weight.to(hidden_states.device)
+                if self.lm_head.weight.device != hidden_states.device:
+                    self.lm_head.weight = self.lm_head.weight.to(hidden_states.device)
+                    
                 logits = fused_rmsnorm_linear(
                     hidden_states,
                     self.text_decoder.norm.weight,
@@ -715,6 +720,11 @@ class GlmAsrModel:
         else:
             hidden_states = result
             if use_fused and hidden_states.is_cuda:
+                if self.text_decoder.norm.weight.device != hidden_states.device:
+                    self.text_decoder.norm.weight = self.text_decoder.norm.weight.to(hidden_states.device)
+                if self.lm_head.weight.device != hidden_states.device:
+                    self.lm_head.weight = self.lm_head.weight.to(hidden_states.device)
+                    
                 logits = fused_rmsnorm_linear(
                     hidden_states,
                     self.text_decoder.norm.weight,

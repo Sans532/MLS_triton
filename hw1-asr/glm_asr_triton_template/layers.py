@@ -1002,7 +1002,7 @@ def fused_rmsnorm_linear(x: torch.Tensor, norm_weight: torch.Tensor, linear_weig
     
     rmsnorm_linear_kernel[grid](
         x_2d,
-        norm_weight,
+        norm_weight.contiguous(),
         linear_weight_t,
         output,
         M, N, K,
