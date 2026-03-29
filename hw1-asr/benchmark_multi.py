@@ -483,7 +483,10 @@ def run_one(model, processor, audio, device, num_warmup, num_runs):
     else:
         inputs = processor(audio, sampling_rate=16000, return_tensors="pt")
 
-    feats = (inputs.get("input_features") or inputs.get("audio_features")).to(device)
+    feats = inputs.get("input_features")
+    if feats is None:
+        feats = inputs.get("audio_features")
+    feats = feats.to(device)
     ids   = inputs.get("input_ids")
     mask  = inputs.get("input_features_mask") or inputs.get("attention_mask")
     if ids  is not None: ids  = ids.to(device)
