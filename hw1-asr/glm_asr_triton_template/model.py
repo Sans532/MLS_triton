@@ -11,7 +11,7 @@ from dataclasses import dataclass
 # Import Triton components
 from layers import (
     RMSNorm, LayerNorm, Linear, Embedding, MLP,
-    gelu, silu, softmax, get_stream
+    gelu, silu, softmax, get_stream, fused_rmsnorm_linear
 )
 from rope import RotaryEmbedding, apply_rotary_pos_emb
 from attention import scaled_dot_product_attention, MultiHeadAttention
@@ -423,7 +423,8 @@ class TextDecoder:
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
         past_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
-        use_cache: bool = False
+        use_cache: bool = False,
+        bypass_final_norm: bool = False
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, List[Tuple[torch.Tensor, torch.Tensor]]]]:
         """Forward pass with optional KV cache support.
 
@@ -483,7 +484,8 @@ class TextDecoder:
                 )
 
         # Final norm
-        hidden_states = self.norm(hidden_states)
+        if not bypass_final_norm:
+            hidden_states = self.norm(hidden_states)
 
         if use_cache:
             return hidden_states, present_key_values
@@ -494,6 +496,7 @@ class TextDecoder:
         inputs_embeds: torch.Tensor,
         kv_buffers: List[Tuple[torch.Tensor, torch.Tensor]],
         cache_pos: int,
+        bypass_final_norm: bool = False
     ) -> Tuple[torch.Tensor, int]:
         """V8.1: Forward with pre-allocated KV buffers.
 
@@ -527,7 +530,8 @@ class TextDecoder:
             )
 
         # Final norm
-        hidden_states = self.norm(hidden_states)
+        if not bypass_final_norm:
+            hidden_states = self.norm(hidden_states)
 
         return hidden_states, new_cache_pos
 
@@ -682,21 +686,45 @@ class GlmAsrModel:
         use_cache: bool = False
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, List[Tuple[torch.Tensor, torch.Tensor]]]]:
         """Decode to logits with optional KV cache support."""
+        # Use fused kernel if input is on CUDA and sizes match power-of-2 requirements implicitly mostly
+        use_fused = True
+        
         result = self.text_decoder(
             input_ids=input_ids,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
-            use_cache=use_cache
+            use_cache=use_cache,
+            bypass_final_norm=use_fused
         )
 
         if use_cache:
             hidden_states, present_key_values = result
-            logits = self.lm_head(hidden_states)
+            if use_fused and hidden_states.is_cuda:
+                logits = fused_rmsnorm_linear(
+                    hidden_states,
+                    self.text_decoder.norm.weight,
+                    self.lm_head.weight,
+                    self.text_decoder.norm.eps
+                )
+            else:
+                if use_fused: # fallback if not cuda
+                    hidden_states = self.text_decoder.norm(hidden_states)
+                logits = self.lm_head(hidden_states)
             return logits, present_key_values
         else:
             hidden_states = result
-            logits = self.lm_head(hidden_states)
+            if use_fused and hidden_states.is_cuda:
+                logits = fused_rmsnorm_linear(
+                    hidden_states,
+                    self.text_decoder.norm.weight,
+                    self.lm_head.weight,
+                    self.text_decoder.norm.eps
+                )
+            else:
+                if use_fused: # fallback if not cuda
+                    hidden_states = self.text_decoder.norm(hidden_states)
+                logits = self.lm_head(hidden_states)
             return logits
 
     def forward(

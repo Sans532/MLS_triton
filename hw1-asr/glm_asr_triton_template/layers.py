@@ -975,6 +975,45 @@ def softmax(x: torch.Tensor, axis: int = -1) -> torch.Tensor:
     return result
 
 
+def fused_rmsnorm_linear(x: torch.Tensor, norm_weight: torch.Tensor, linear_weight: torch.Tensor, eps: float) -> torch.Tensor:
+    """
+    Applies fused RMSNorm + Linear computation.
+    x: (..., K)
+    norm_weight: (K)
+    linear_weight: (N, K)
+    Returns: (..., N)
+    """
+    orig_shape = x.shape
+    K = orig_shape[-1]
+    N = linear_weight.shape[0]
+    
+    x_2d = x.reshape(-1, K).to(torch.float32).contiguous()
+    M = x_2d.shape[0]
+    
+    output = torch.empty((M, N), dtype=torch.float32, device=x.device)
+    
+    # Transpose linear weight for K x N access pattern in kernel
+    linear_weight_t = linear_weight.t().contiguous()
+    
+    grid = lambda META: (
+        triton.cdiv(M, META['BLOCK_M']),
+        triton.cdiv(N, META['BLOCK_N']),
+    )
+    
+    rmsnorm_linear_kernel[grid](
+        x_2d,
+        norm_weight,
+        linear_weight_t,
+        output,
+        M, N, K,
+        x_2d.stride(0), x_2d.stride(1),
+        linear_weight_t.stride(0), linear_weight_t.stride(1),
+        output.stride(0), output.stride(1),
+        eps
+    )
+    
+    return output.reshape(*orig_shape[:-1], N)
+
 class MLP:
     """MLP with SwiGLU gating using Triton."""
 

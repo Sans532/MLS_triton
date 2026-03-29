@@ -11,12 +11,9 @@ import os
 import torch
 import numpy as np
 import evaluate
-from datasets import load_dataset
+import wave
+import struct
 import logging
-
-# Suppress datasets warnings
-logging.getLogger("datasets").setLevel(logging.ERROR)
-
 
 def prepare_inputs_torch(audio_array, processor, device):
     """Reuse the standard testing tensor preparation exactly."""
@@ -72,6 +69,27 @@ def decode_output(generated_np, processor):
         return f"[decode error: {e}]"
 
 
+def read_local_wav(filepath):
+    """Built-in library wave reader to avoid FFMPEG/libsnd dependencies on Node"""
+    with wave.open(filepath, 'rb') as wav:
+        sr = wav.getframerate()
+        n_channels = wav.getnchannels()
+        n_frames = wav.getnframes()
+        sample_width = wav.getsampwidth()
+        raw_data = wav.readframes(n_frames)
+        
+        if sample_width == 2:
+            fmt = f'<{n_frames * n_channels}h'
+            audio = np.array(struct.unpack(fmt, raw_data), dtype=np.float32)
+            audio = audio / 32768.0
+        else:
+            raise ValueError(f"Unsupported sample width: {sample_width}")
+        
+        if n_channels > 1:
+            audio = audio.reshape(-1, n_channels).mean(axis=1)
+        return audio, sr
+
+
 def main():
     parser = argparse.ArgumentParser(description="Evaluate GLM-ASR implementation on standard dummy dataset.")
     parser.add_argument("folder", type=str, help="Folder containing model implementations (e.g. glm_asr_triton_template)")
@@ -92,10 +110,18 @@ def main():
     wer_metric = evaluate.load("wer")
     cer_metric = evaluate.load("cer")
 
-    print("\nDownloading/Loading huggingface dummy librispeech dataset...")
-    ds = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
+    dataset_dir = os.path.join(script_dir, "dummy_dataset")
+    if not os.path.exists(dataset_dir):
+        print(f"Error: Dataset folder '{dataset_dir}' not found.")
+        print("Please run 'python download_dataset.py' to fetch and format the local dataset.")
+        sys.exit(1)
+
+    print(f"\nLoading local dataset from '{dataset_dir}'...")
+    with open(os.path.join(dataset_dir, "transcripts.txt"), "r", encoding="utf-8") as f:
+        ds_lines = [line.strip() for line in f if line.strip()]
+        
     if args.max_samples:
-        ds = ds.select(range(min(args.max_samples, len(ds))))
+        ds_lines = ds_lines[:args.max_samples]
 
     generate_fn = model.generate
     if hasattr(model, 'generate_v8b'): generate_fn = model.generate_v8b
@@ -111,7 +137,8 @@ def main():
     total_tokens = 0
 
     print("Running GPU warmup (ensures Triton kernel JIT compiling doesn't skew first dataset inference)...")
-    warmup_audio = ds[0]["audio"]["array"]
+    warmup_filename, _ = ds_lines[0].split("|", 1)
+    warmup_audio, _ = read_local_wav(os.path.join(dataset_dir, warmup_filename))
     w_in_feat, w_in_ids, w_in_mask = prepare_inputs_torch(warmup_audio, processor, device)
     
     with torch.no_grad():
@@ -127,12 +154,13 @@ def main():
     print("STARTING BATCH EVALUATION")
     print("="*50)
     
-    for i, item in enumerate(ds):
-        audio_array = item["audio"]["array"]
-        sr = item["audio"]["sampling_rate"]
-        expected_text = item["text"]
+    for i, line in enumerate(ds_lines):
+        filename, expected_text = line.split("|", 1)
+        audio_path = os.path.join(dataset_dir, filename)
         
-        # Guard - resample audio if not 16KHz
+        audio_array, sr = read_local_wav(audio_path)
+        
+        # Double check sanity resample (should be 16k out of box via download script)
         if sr != 16000:
             old_indices = np.arange(len(audio_array))
             new_length = int(len(audio_array) * 16000 / sr)
