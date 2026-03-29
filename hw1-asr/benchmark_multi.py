@@ -475,22 +475,25 @@ def load_model(folder_name, script_dir):
 # ─── Single-sample timed run (identical to benchmark_student.py) ─────────────
 
 def run_one(model, processor, audio, device, num_warmup, num_runs):
-    """Warmup + timed runs. Uses torch.cuda.synchronize() + perf_counter."""
+    """Warmup + timed runs. Uses torch.cuda.synchronize() + perf_counter.
+    Input preparation mirrors prepare_inputs_torch in benchmark_student.py exactly."""
     import torch
 
+    # ── prepare inputs (same logic as benchmark_student.py) ──────────────────
     if hasattr(processor, "apply_transcription_request"):
         inputs = processor.apply_transcription_request(audio, sampling_rate=16000)
+        feats  = inputs.input_features.to(device=device, dtype=torch.float32)
+        ids    = inputs.input_ids.to(device=device, dtype=torch.int64)
+        mask   = None
+        if hasattr(inputs, "input_features_mask") and inputs.input_features_mask is not None:
+            mask = inputs.input_features_mask.to(device=device, dtype=torch.float32)
     else:
         inputs = processor(audio, sampling_rate=16000, return_tensors="pt")
-
-    feats = inputs.get("input_features")
-    if feats is None:
-        feats = inputs.get("audio_features")
-    feats = feats.to(device)
-    ids   = inputs.get("input_ids")
-    mask  = inputs.get("input_features_mask") or inputs.get("attention_mask")
-    if ids  is not None: ids  = ids.to(device)
-    if mask is not None: mask = mask.to(device)
+        feats  = inputs["input_features"].to(device=device, dtype=torch.float32)
+        ids    = inputs.get("input_ids")
+        if ids is not None:
+            ids = ids.to(device=device, dtype=torch.int64)
+        mask   = None   # no mask in this path
 
     def _gen():
         with torch.no_grad():
